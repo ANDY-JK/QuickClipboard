@@ -1,0 +1,38 @@
+/* 主窗口首屏基础样式。
+ * 必须外置为独立 CSS 文件：静态 <style> 会被 tauri-codegen 注入 nonce 占位，
+ * 使该文档的 CSP 追加 'nonce-...'，从而让 'unsafe-inline' 失效（剪贴板富文本内联样式被拦）。
+ * 以同步 <link> 引入，保持渲染阻塞，避免首屏无样式闪烁。 */
+
+/* 基础重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: none !important;
+  border-radius: 10px;
+}
+
+/* 防止样式闪烁：预定义关键样式 */
+#root {
+  background: white;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 确保内容可见 */
+#root > * {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
