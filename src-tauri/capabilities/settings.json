@@ -18,26 +18,25 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-destroy",
     "core:window:allow-start-dragging",
-    "opener:default",
-    "opener:allow-open-path",
-    "dialog:allow-save",
-    "dialog:allow-open",
-    "dialog:default",
-    "updater:default",
-    "updater:allow-check",
-    "updater:allow-download-and-install",
-    "http:default",
-    "http:allow-fetch",
     {
-      "identifier": "http:default",
+      "identifier": "opener:allow-open-url",
       "allow": [
         {
-          "url": "https://github.com/**"
+          "url": "http://*"
         },
         {
-          "url": "https://api.github.com/**"
+          "url": "https://*"
         }
       ]
-    }
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    "dialog:default"
   ]
 }

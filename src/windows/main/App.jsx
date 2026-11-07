@@ -1,7 +1,6 @@
-import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSnapshot } from 'valtio';
-import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { settingsStore } from '@shared/store/settingsStore';
@@ -14,13 +13,12 @@ import { useTheme, applyThemeToBody } from '@shared/hooks/useTheme';
 import { useSettingsSync } from '@shared/hooks/useSettingsSync';
 import { useNavigationKeyboard } from '@shared/hooks/useNavigationKeyboard';
 import { useWindowAnimation } from '@shared/hooks/useWindowAnimation';
+import { useTauriEvent } from '@shared/hooks/useTauriEvent';
 import { applyBackgroundImage, clearBackgroundImage } from '@shared/utils/backgroundManager';
-import { getUpdateBannerState } from '@shared/api/settings';
 import { promptDisableWinVHotkeyIfNeeded } from '@shared/api/system';
 import { toggleWindowPin } from '@shared/services/titleBarActions';
 import { getVisibleMainTabs, isMainTabVisible } from '@shared/constants/tabVisibility';
 import { toast, TOAST_POSITIONS, TOAST_SIZES } from '@shared/store/toastStore';
-import { formatUserMessage } from '@shared/utils/userMessages';
 import { mergePasteSelectedItems } from './utils/multiSelect';
 import TitleBar from './components/TitleBar';
 import TabNavigation from './components/TabNavigation';
@@ -37,7 +35,7 @@ const TAB_NAVIGATION_MODE = {
 const SIDEBAR_TABS_MEDIA_QUERY = '(min-width: 550px)';
 const COMPACT_TITLE_BAR_MEDIA_QUERY = '(max-width: 299px)';
 const COMPACT_FILTERS_MEDIA_QUERY = '(max-width: 299px)';
-const WEBDAV_TOAST_CONFIG = {
+const MERGE_PASTE_TOAST_CONFIG = {
   size: TOAST_SIZES.EXTRA_SMALL,
   position: TOAST_POSITIONS.BOTTOM_RIGHT
 };
@@ -74,9 +72,12 @@ function App() {
   const [activeTab, setActiveTab] = useState('clipboard');
   const [contentFilter, setContentFilter] = useState('all');
   const [pasteFilter, setPasteFilter] = useState('all');
+  const handleClearFilters = useCallback(() => {
+    setContentFilter('all');
+    setPasteFilter('all');
+  }, []);
   const [searchQuery, setSearchQuery] = useState('');
   const [emojiMode, setEmojiMode] = useState('emoji'); // 'emoji' | 'symbols' | 'images'
-  const [updateBannerState, setUpdateBannerState] = useState(null);
   const [isSidebarTabsLayout, setIsSidebarTabsLayout] = useState(getIsSidebarTabsLayout);
   const [isCompactTitleBar, setIsCompactTitleBar] = useState(getIsCompactTitleBar);
   const [isCompactFilters, setIsCompactFilters] = useState(getIsCompactFilters);
@@ -84,6 +85,9 @@ function App() {
   const favoritesTabRef = useRef(null);
   const groupsPopupRef = useRef(null);
   const searchRef = useRef(null);
+  // window-show/hide 回调需要最新 activeTab/settings，通过 ref 传给事件监听，避免每次变化重建监听。
+  const handleWindowShowRef = useRef(null);
+  const handleWindowHideRef = useRef(null);
   const tabNavigationMode = isSidebarTabsLayout
     ? TAB_NAVIGATION_MODE.SIDEBAR
     : TAB_NAVIGATION_MODE.HORIZONTAL;
@@ -96,32 +100,6 @@ function App() {
       setActiveTab('clipboard');
     }
   }, [activeTab, settings.visibleOptionalTabs]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const loadUpdateBannerState = async () => {
-      try {
-        const state = await getUpdateBannerState();
-        if (mounted) {
-          setUpdateBannerState(state || null);
-        }
-      } catch (error) {
-        console.error('获取更新提示状态失败:', error);
-      }
-    };
-
-    const unlistenPromise = listen('update-banner-state-changed', (event) => {
-      setUpdateBannerState(event.payload || null);
-    });
-
-    loadUpdateBannerState();
-
-    return () => {
-      mounted = false;
-      unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
-    };
-  }, []);
 
   // 启动时检查 Win+V
   useEffect(() => {
@@ -183,73 +161,42 @@ function App() {
     favoritesStore.exitMultiSelectMode();
   }, [activeTab]);
   useEffect(() => {
-    const setupListeners = async () => {
-      const handleWindowShow = async () => {
-        try {
-          const { saveCurrentFocus } = await import('@shared/api/window');
-          await saveCurrentFocus();
-        } catch (err) {
-          console.warn('保存焦点失败:', err);
-        }
+    const handleWindowShow = async () => {
+      try {
+        const { saveCurrentFocus } = await import('@shared/api/window');
+        await saveCurrentFocus();
+      } catch (err) {
+        console.warn('保存焦点失败:', err);
+      }
 
-        if (settingsStore.autoClearSearch) {
-          setSearchQuery('');
-        }
-        if (settingsStore.autoFocusSearch) {
-            setTimeout(() => {
-                searchRef.current?.focus?.();
-            }, 200);
-        }
-      };
-      const handleWindowHide = () => {
-        searchRef.current?.blur?.();
-      };
-      const unlisten1 = await listen('window-show-animation', handleWindowShow);
-      const unlisten2 = await listen('edge-snap-show', handleWindowShow);
-      const unlisten3 = await listen('paste-plain-text-selected', () => {
-        if (activeTab === 'clipboard' && clipboardTabRef.current?.executePlainTextPaste) {
-          clipboardTabRef.current.executePlainTextPaste();
-        } else if (activeTab === 'favorites' && favoritesTabRef.current?.executePlainTextPaste) {
-          favoritesTabRef.current.executePlainTextPaste();
-        }
-      });
-      const unlisten4 = await listen('webdav-window-show-pull-report', event => {
-        const result = event.payload || {};
-        const pulled = result?.pulled || 0;
-        if (pulled <= 0) {
-          return;
-        }
-
-        toast.success(t('settings.webdav.successWithDetail', {
-          title: t('settings.webdav.autoPullOnWindowShowComplete'),
-          detail: t('settings.webdav.syncResultDetail', {
-            total: pulled,
-            clipboard: result?.pulled_clipboard || 0,
-            favorites: result?.pulled_favorites || 0,
-            groups: result?.pulled_groups || 0,
-          }),
-        }), { ...WEBDAV_TOAST_CONFIG, duration: 5000 });
-      });
-      const unlisten5 = await listen('webdav-window-show-pull-error', event => {
-        console.error('主窗口显示时 WebDAV 自动拉取失败:', event.payload);
-        toast.error(formatUserMessage(event.payload, t, 'errors.webdav.operationFailed'), { ...WEBDAV_TOAST_CONFIG, duration: 6000 });
-      });
-      const unlisten6 = await listen('window-hide-animation', handleWindowHide);
-      const unlisten7 = await listen('edge-snap-hide', handleWindowHide);
-
-      return () => {
-        unlisten1();
-        unlisten2();
-        unlisten3();
-        unlisten4();
-        unlisten5();
-        unlisten6();
-        unlisten7();
-      };
+      if (settingsStore.autoClearSearch) {
+        setSearchQuery('');
+      }
+      if (settingsStore.autoFocusSearch) {
+          setTimeout(() => {
+              searchRef.current?.focus?.();
+          }, 200);
+      }
     };
-    let cleanup = setupListeners();
-    return () => cleanup.then(fn => fn());
-  }, [activeTab, t]);
+    const handleWindowHide = () => {
+      searchRef.current?.blur?.();
+    };
+
+    handleWindowShowRef.current = handleWindowShow;
+    handleWindowHideRef.current = handleWindowHide;
+  }, []);
+
+  useTauriEvent('window-show-animation', () => handleWindowShowRef.current?.());
+  useTauriEvent('edge-snap-show', () => handleWindowShowRef.current?.());
+  useTauriEvent('paste-plain-text-selected', () => {
+    if (activeTab === 'clipboard' && clipboardTabRef.current?.executePlainTextPaste) {
+      clipboardTabRef.current.executePlainTextPaste();
+    } else if (activeTab === 'favorites' && favoritesTabRef.current?.executePlainTextPaste) {
+      favoritesTabRef.current.executePlainTextPaste();
+    }
+  });
+  useTauriEvent('window-hide-animation', () => handleWindowHideRef.current?.());
+  useTauriEvent('edge-snap-hide', () => handleWindowHideRef.current?.());
 
   useEffect(() => {
     let refreshingTopmost = false;
@@ -423,11 +370,11 @@ function App() {
     if (isMultiSelectMode) {
       try {
         if (await mergePasteSelectedItems(activeTab)) {
-          toast.success(t('multiSelect.mergePasted'), WEBDAV_TOAST_CONFIG);
+          toast.success(t('multiSelect.mergePasted'), MERGE_PASTE_TOAST_CONFIG);
         }
       } catch (error) {
         console.error('合并粘贴失败:', error);
-        toast.error(error?.message || t('common.pasteFailed'), WEBDAV_TOAST_CONFIG);
+        toast.error(error?.message || t('common.pasteFailed'), MERGE_PASTE_TOAST_CONFIG);
       }
       return;
     }
@@ -535,11 +482,11 @@ function App() {
     transition-colors duration-500 ease-in-out
     bg-qc-surface
   `.trim().replace(/\s+/g, ' ');
-  const TitleBarComponent = <TitleBar ref={searchRef} searchQuery={searchQuery} onSearchChange={setSearchQuery} searchPlaceholder={t('search.placeholder')} position={settings.titleBarPosition} activeTab={activeTab} updateBannerState={updateBannerState} compactActions={isCompactTitleBar} />;
+  const TitleBarComponent = <TitleBar ref={searchRef} searchQuery={searchQuery} onSearchChange={setSearchQuery} searchPlaceholder={t('search.placeholder')} position={settings.titleBarPosition} activeTab={activeTab} compactActions={isCompactTitleBar} />;
   const TabNavigationComponent = <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} contentFilter={contentFilter} onFilterChange={setContentFilter} pasteFilter={pasteFilter} onPasteFilterChange={setPasteFilter} emojiMode={emojiMode} onEmojiModeChange={setEmojiMode} onGroupChange={handleGroupChange} groupsPopupRef={groupsPopupRef} navigationMode={tabNavigationMode} compactFilters={isCompactFilters} />;
   const ContentComponent = <div ref={contentDragRef} className="main-content-area flex-1 min-h-0 overflow-hidden relative pb-[8px] bg-qc-surface transition-colors duration-500">
-      {activeTab === 'clipboard' && <ClipboardTab ref={clipboardTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} />}
-      {activeTab === 'favorites' && <FavoritesTab ref={favoritesTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} />}
+      {activeTab === 'clipboard' && <ClipboardTab ref={clipboardTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} onClearFilters={handleClearFilters} />}
+      {activeTab === 'favorites' && <FavoritesTab ref={favoritesTabRef} contentFilter={contentFilter} pasteFilter={pasteFilter} searchQuery={searchQuery} onClearFilters={handleClearFilters} />}
       {activeTab === 'emoji' && <Suspense fallback={null}><EmojiTab emojiMode={emojiMode} onEmojiModeChange={setEmojiMode} /></Suspense>}
     </div>;
   const ActionBarComponent = <MultiSelectActionBar activeTab={activeTab} />;

@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useTranslation } from 'react-i18next';
 import SidebarButton from './SidebarButton';
 
@@ -31,13 +31,13 @@ export const navigationItems = [{
   icon: "ti ti-filter",
   labelKey: 'settings.sections.appFilter'
 }, {
-  id: 'syncTransfer',
-  icon: "ti ti-arrows-transfer-up-down",
-  labelKey: 'settings.sections.syncTransfer'
-}, {
   id: 'dataManagement',
   icon: "ti ti-database",
   labelKey: 'settings.sections.dataManagement'
+}, {
+  id: 'extensions',
+  icon: "ti ti-puzzle",
+  labelKey: 'settings.sections.extensions'
 }, {
   id: 'about',
   icon: "ti ti-info-circle",

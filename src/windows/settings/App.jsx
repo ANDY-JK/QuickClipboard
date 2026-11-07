@@ -12,13 +12,11 @@ import GeneralSection from './sections/GeneralSection';
 import AppearanceSection from './sections/AppearanceSection';
 import ShortcutsSection from './sections/ShortcutsSection';
 import ClipboardSection from './sections/ClipboardSection';
-import SyncTransferSection from './sections/SyncTransferSection';
-import AIConfigSection from './sections/AIConfigSection';
-import TranslationSection from './sections/TranslationSection';
 import PreviewSection from './sections/PreviewSection';
 import SoundSection from './sections/SoundSection';
 import AppFilterSection from './sections/AppFilterSection';
 import DataManagementSection from './sections/DataManagementSection';
+import ExtensionsSection from './sections/ExtensionsSection';
 import AboutSection from './sections/AboutSection';
 import ToastContainer from '@shared/components/common/ToastContainer';
 
@@ -134,15 +132,6 @@ function App() {
       case 'clipboard':
         content = <ClipboardSection settings={snap} onSettingChange={handleSettingChange} />;
         break;
-      case 'syncTransfer':
-        content = <SyncTransferSection settings={snap} onSettingChange={handleSettingChange} />;
-        break;
-      case 'aiConfig':
-        content = <AIConfigSection settings={snap} onSettingChange={handleSettingChange} />;
-        break;
-      case 'translation':
-        content = <TranslationSection settings={snap} onSettingChange={handleSettingChange} />;
-        break;
       case 'quickpaste':
         content = <PreviewSection settings={snap} onSettingChange={handleSettingChange} />;
         break;
@@ -155,8 +144,11 @@ function App() {
       case 'dataManagement':
         content = <DataManagementSection />;
         break;
+      case 'extensions':
+        content = <ExtensionsSection settings={snap} onSettingChange={handleSettingChange} />;
+        break;
       case 'about':
-        content = <AboutSection settings={snap} onSettingChange={handleSettingChange} />;
+        content = <AboutSection />;
         break;
       default:
         content = <GeneralSection settings={snap} onSettingChange={handleSettingChange} />;

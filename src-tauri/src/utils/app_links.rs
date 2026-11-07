@@ -3,16 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppLinks {
-    pub website: String,
     pub github: String,
-    #[serde(rename = "pdChannel", default)]
-    pub pd_channel: String,
-    #[serde(rename = "qqGroup1", default)]
-    pub qq_group_1: String,
-    #[serde(rename = "qqGroup2", default)]
-    pub qq_group_2: String,
-    pub bilibili: String,
-    pub changelog: String,
     #[serde(rename = "releasesLatest")]
     pub releases_latest: String,
 }

@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::Manager;
-use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod commands;
@@ -131,10 +130,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_store::Builder::new().build());
     
@@ -156,12 +152,10 @@ pub fn run() {
                 commands::set_window_pinned,
                 commands::toggle_window_visibility,
                 commands::open_settings_window,
-                commands::open_community_window,
                 commands::open_text_editor_window,
                 commands::drop_proxy::drop_proxy_ensure,
                 commands::drop_proxy::drop_proxy_show,
                 commands::drop_proxy::drop_proxy_hide,
-                commands::drop_proxy::drop_proxy_dispose,
                 commands::drop_proxy::drop_proxy_route_paths_at_cursor,
                 commands::drop_proxy::drop_proxy_save_resource,
                 commands::drop_proxy::drop_proxy_save_url,
@@ -172,29 +166,6 @@ pub fn run() {
                 windows::preview_window::reveal_preview_window,
                 windows::preview_window::finalize_hide_preview_window,
                 windows::preview_window::get_preview_window_data,
-                windows::transfer_shelf::commands::transfer_shelf_create,
-                windows::transfer_shelf::commands::transfer_shelf_list,
-                windows::transfer_shelf::commands::transfer_shelf_focus,
-                windows::transfer_shelf::commands::transfer_shelf_rename,
-                windows::transfer_shelf::commands::transfer_shelf_close,
-                windows::transfer_shelf::commands::transfer_shelf_describe_paths,
-                windows::transfer_shelf::commands::transfer_shelf_add_paths,
-                windows::transfer_shelf::commands::transfer_shelf_send,
-                windows::transfer_shelf::commands::transfer_shelf_upload_cloud,
-                windows::transfer_shelf::commands::transfer_shelf_load_state,
-                windows::transfer_shelf::commands::transfer_shelf_save_state,
-                windows::transfer_shelf::commands::transfer_shelf_save_geometry,
-                windows::transfer_shelf::commands::transfer_shelf_apply_geometry,
-                windows::receive_box::commands::receive_box_open,
-                windows::receive_box::commands::receive_box_focus,
-                windows::receive_box::commands::receive_box_list_lan_files,
-                windows::receive_box::commands::receive_box_list_cloud_files,
-                windows::receive_box::commands::receive_box_download_cloud_file,
-                windows::receive_box::commands::receive_box_open_local_file,
-                windows::receive_box::commands::receive_box_reveal_local_file,
-                windows::receive_box::commands::receive_box_delete_local_file,
-                windows::receive_box::commands::receive_box_delete_cloud_file,
-                windows::receive_box::commands::receive_box_add_to_transfer_shelf,
                 commands::emit_clipboard_updated,
                 commands::emit_quick_texts_updated,
                 commands::get_clipboard_history,
@@ -241,12 +212,14 @@ pub fn run() {
                 commands::reload_settings,
                 commands::save_settings,
                 commands::reset_settings_to_default,
-                commands::get_settings_cmd,
                 commands::set_edge_hide_enabled,
                 commands::get_all_windows_info_cmd,
                 commands::is_portable_mode,
                 commands::get_app_version,
-                commands::get_data_directory_cmd,
+                commands::list_extensions,
+                commands::read_extension_entry,
+                commands::install_extension,
+                commands::uninstall_extension,
                 commands::set_auto_start,
                 commands::get_auto_start_status,
                 commands::set_run_as_admin,
@@ -277,9 +250,6 @@ pub fn run() {
                 commands::set_mouse_position,
                 commands::get_mouse_position,
                 commands::copy_text_to_clipboard,
-                commands::check_ai_translation_config,
-                commands::enable_ai_translation_cancel_shortcut,
-                commands::disable_ai_translation_cancel_shortcut,
                 commands::check_win_v_hotkey_disabled,
                 commands::disable_win_v_hotkey_and_restart,
                 commands::enable_win_v_hotkey_and_restart,
@@ -293,39 +263,7 @@ pub fn run() {
                 commands::play_copy_sound,
                 commands::play_paste_sound,
                 commands::play_scroll_sound,
-                commands::get_app_links_cmd,
                 commands::reload_all_windows,
-                commands::check_updates_and_open_window,
-                commands::get_update_banner_state,
-                commands::open_cached_update_window,
-                commands::webdav_test_connection,
-                commands::webdav_upload,
-                commands::webdav_download,
-                commands::webdav_download_all,
-                commands::webdav_get_status,
-                commands::webdav_get_last_report,
-                commands::webdav_start_scheduler,
-                commands::webdav_stop_scheduler,
-                commands::webdav_has_saved_password,
-                commands::webdav_set_password,
-                commands::webdav_has_saved_encryption_password,
-                commands::webdav_set_encryption_password,
-                commands::sync_transfer_get_mode_infos,
-                commands::sync_transfer_lan_get_status,
-                commands::sync_transfer_lan_start_http_server,
-                commands::sync_transfer_lan_stop_http_server,
-                commands::sync_transfer_lan_refresh_pairing_code,
-                commands::sync_transfer_lan_list_paired_peers,
-                commands::sync_transfer_lan_remove_paired_peer,
-                commands::sync_transfer_lan_pair_with_peer,
-                commands::sync_transfer_lan_fetch_peer_snapshot,
-                commands::sync_transfer_lan_get_local_snapshot,
-                commands::sync_transfer_lan_discover_peers,
-                commands::sync_transfer_lan_get_auto_sync_status,
-                commands::sync_transfer_lan_update_auto_sync_settings,
-                commands::sync_transfer_lan_pull_from_peer,
-                commands::sync_transfer_lan_push_to_peer,
-                commands::sync_transfer_lan_send_file_to_peer,
                 windows::plugins::context_menu::commands::show_context_menu,
                 windows::plugins::context_menu::commands::get_context_menu_options,
                 windows::plugins::context_menu::commands::submit_context_menu,
@@ -343,21 +281,21 @@ pub fn run() {
                 windows::pin_image_window::save_pin_image_as,
                 utils::screen::get_all_screens,
                 utils::system::get_system_text_scale,
-                commands::il_init,
                 commands::il_save_image,
                 commands::il_get_image_list,
                 commands::il_get_image_count,
                 commands::il_delete_image,
                 commands::il_rename_image,
-                commands::il_get_images_dir,
-                commands::il_get_gifs_dir,
                 commands::il_get_groups,
                 commands::il_add_group,
                 commands::il_update_group,
                 commands::il_move_image_to_group,
                 commands::il_delete_group,
-                commands::recognize_image_ocr,
                 commands::recognize_file_ocr,
+                commands::get_image_thumbnail,
+                commands::cleanup_thumbnail_cache,
+                commands::cleanup_orphan_images,
+                commands::compact_database,
             ])
         
     .setup(|app| {
@@ -384,25 +322,57 @@ pub fn run() {
                     }
                 }
 
+                startup_diagnostics::set_startup_stage("执行 setup：授权资源协议目录");
+                // portable / 自定义存储目录在构建期不可知，运行时把实际数据目录加入 asset 白名单
+                if let Ok(data_dir) = get_data_directory() {
+                    services::asset_scope::allow_directory(app.handle(), &data_dir);
+                }
+
                 startup_diagnostics::set_startup_stage("执行 setup：初始化数据库");
                 let db_path_buf = get_data_directory()?.join("quickclipboard.db");
                 let db_path_str = db_path_buf.to_str().ok_or("数据库路径无效")?;
+                // 上次压缩若在替换窗口内被强杀，先用备份恢复主库，再走正常初始化
+                if let Some(message) = services::storage_maintenance::recover_interrupted_compact() {
+                    eprintln!("[compact] {}", message);
+                    startup_diagnostics::append_database_recovery_log(&message);
+                }
                 if let Err(e1) = services::database::init_database(db_path_str) {
-                    if let Some(dir) = db_path_buf.parent() {
-                        for name in ["quickclipboard.db-wal", "quickclipboard.db-shm"] {
-                            let p = dir.join(name);
-                            if p.exists() { let _ = fs::remove_file(&p); }
+                    eprintln!("数据库初始化失败，先尝试 WAL checkpoint 收敛: {}", e1);
+
+                    // 第一步：把 -wal 中已提交但未 checkpoint 的事务并回主库，再重试
+                    match services::database::connection::checkpoint_wal_truncate(db_path_str) {
+                        Ok(()) => {
+                            if let Ok(()) = services::database::init_database(db_path_str) {
+                                startup_diagnostics::append_database_recovery_log(
+                                    "WAL checkpoint 收敛后数据库恢复正常",
+                                );
+                            } else {
+                                recover_database_by_backup(db_path_str, &e1)?;
+                            }
+                        }
+                        Err(checkpoint_err) => {
+                            eprintln!("WAL checkpoint 失败: {}", checkpoint_err);
+                            recover_database_by_backup(db_path_str, &e1)?;
                         }
                     }
-                    services::database::init_database(db_path_str)
-                        .map_err(|e2| format!("数据库初始化失败(已尝试清理 wal/shm): {} -> {}", e1, e2))?;
                 }
                 let _ = services::database::connection::with_connection(|conn| {
                     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
                 });
+                // 主库已确认可用，此时才删除压缩备份；否则会在 init_database 失败、
+                // 需要走 recover_database_by_backup 时提前丢掉回滚点。
+                services::storage_maintenance::cleanup_stale_compact_backups();
                 
                 startup_diagnostics::set_startup_stage("执行 setup：加载设置");
                 let mut settings = get_settings();
+                // 启动即授权用户自选背景图/字体，避免窗口在命令返回前渲染时拿不到资源
+                services::asset_scope::allow_settings_paths(app.handle(), &settings);
+                // 缩略图目录位于数据目录下，启动后后台低频清理一次，不阻塞启动
+                commands::thumbnail::schedule_startup_cleanup();
+                // 运行标记：正常退出时清除；连续未清除才在诊断里提示异常退出
+                services::storage_maintenance::init_run_marker();
+                // 启动后延迟数秒回收孤儿图片/老化缩略图，不阻塞启动
+                services::storage_maintenance::schedule_startup_orphan_cleanup();
                 
                 if let Some((w, h)) = settings.saved_window_size.filter(|_| settings.remember_window_size) {
                     windows::main_window::apply_saved_window_size(&window, w, h);
@@ -416,7 +386,12 @@ pub fn run() {
                         }
                     }
                 }
-                let _ = services::database::limit_clipboard_history(settings.history_limit);
+                // 启动裁剪放到后台线程：不阻塞首屏。裁剪逻辑本身是幂等的分块删除，
+                // 最终数据状态与同步执行一致（超出 history_limit 的旧记录终将被删除）
+                let history_limit = settings.history_limit;
+                std::thread::spawn(move || {
+                    let _ = services::database::limit_clipboard_history(history_limit);
+                });
                 
                 startup_diagnostics::set_startup_stage("执行 setup：初始化屏幕与输入监听");
                 utils::init_screen_utils(app.handle().clone());
@@ -437,21 +412,9 @@ pub fn run() {
                 quickpaste::init_quickpaste_state();
                 let _ = quickpaste::init_quickpaste_window(&app.handle());
                 set_clipboard_app_handle(app.handle().clone());
-                services::webdav_sync::sync_scheduler::set_app_handle(app.handle().clone());
 
                 windows::pin_image_window::init_pin_image_window();
                 focus::start_focus_listener(app.handle().clone());
-
-                if settings.webdav_enabled {
-                    services::webdav_sync::start_scheduler();
-                }
-
-                {
-                    let app_handle = app.handle().clone();
-                    tauri::async_runtime::spawn(async move {
-                        services::sync_transfer::lan_start_configured_services(app_handle).await;
-                    });
-                }
 
                 if settings.clipboard_monitor {
                     let _ = start_clipboard_monitor();
@@ -476,7 +439,6 @@ pub fn run() {
             match event {
                 tauri::RunEvent::Ready => {
                     startup_diagnostics::mark_ready();
-                    windows::transfer_shelf::schedule_startup_restore_persisted_shelves(app.clone());
                     tauri::async_runtime::spawn(async {
                         tokio::time::sleep(std::time::Duration::from_millis(
                             STARTUP_HOTKEY_RETRY_DELAY_MS,
@@ -498,7 +460,6 @@ pub fn run() {
                         api.prevent_exit();
                     } else {
                         SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
-                        services::webdav_sync::crypto::clear_cached_keys();
                     }
                 }
                 tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } => {
@@ -507,7 +468,6 @@ pub fn run() {
                         && !SHUTDOWN_REQUESTED.load(Ordering::SeqCst)
                         && !MAIN_WINDOW_RECOVERY_PENDING.swap(true, Ordering::SeqCst)
                     {
-                        services::webdav_sync::crypto::clear_cached_keys();
                         let app_handle = app.clone();
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -520,7 +480,35 @@ pub fn run() {
                         });
                     }
                 }
+                tauri::RunEvent::Exit => {
+                    // 正常退出时清除运行标记，遗留标记将作为下次启动的异常退出判据
+                    services::storage_maintenance::clear_run_marker();
+                }
                 _ => {}
             }
         });
+}
+
+// 数据库无法打开时：先备份（改名而非删除）db/-wal/-shm，再重建空库。
+// 备份保留已提交但未 checkpoint 的全部字节，事后仍可用 sqlite3 恢复。
+fn recover_database_by_backup(db_path: &str, first_error: &str) -> Result<(), String> {
+    let backups = services::database::connection::backup_corrupt_database(db_path)
+        .map_err(|e| format!("数据库初始化失败({})；备份也失败: {}", first_error, e))?;
+    let backup_names = if backups.is_empty() {
+        "无文件可备份".to_string()
+    } else {
+        backups.join(", ")
+    };
+
+    startup_diagnostics::append_database_recovery_log(&format!(
+        "数据库已备份而非删除: {}；首次错误: {}",
+        backup_names, first_error
+    ));
+
+    services::database::init_database(db_path).map_err(|e| {
+        format!(
+            "数据库初始化失败(已备份为 {}): {} -> {}",
+            backup_names, first_error, e
+        )
+    })
 }
