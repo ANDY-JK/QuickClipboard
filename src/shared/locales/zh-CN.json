@@ -717,7 +717,7 @@
       "appName": "QuickClipboard",
       "version": "版本",
       "descriptionText": "一个功能强大的剪贴板管理工具，帮助您更高效地管理和使用剪贴板内容。",
-      "creditsText": "本项目基于原版 QuickClipboard 二次开发维护。原项目由 mosheng1 开源并采用 Apache License 2.0 许可，版权与许可条款归原作者所有，详见 GitHub 原仓库。本衍生版本由 {{maintainer}} 独立维护，并非原作者官方发布。",
+      "creditsText": "本项目基于原版 QuickClipboard 二次开发维护。原项目由 mosheng1 开源并采用 Apache License 2.0 许可，版权与许可条款归原作者所有，详见 GitHub 原仓库。本衍生版本由维护者 {{maintainer}} 独立维护，并非原作者官方发布。",
       "clickToCopyVersion": "点击复制版本号",
       "versionCopied": "版本号已复制到剪贴板"
     }

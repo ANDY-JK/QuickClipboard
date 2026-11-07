@@ -1,3 +1,2 @@
 // 衍生版本维护者署名：集中定义，仅在关于页展示时引用。
-// 待用户提供具体署名后，替换此处的占位值即可，无需改动其它文件。
-export const MAINTAINER_NAME = 'TBD';
+export const MAINTAINER_NAME = 'ANDY-JK';

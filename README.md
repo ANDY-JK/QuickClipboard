@@ -194,6 +194,7 @@ npm run test:rust             # Rust 单元测试
 
 - 原仓库：<https://github.com/mosheng1/QuickClipboard>
 - 原版权声明：Copyright 2025 MoSheng
+- 维护者：**ANDY-JK**，衍生仓库：<https://github.com/ANDY-JK/QuickClipboard>
 - 许可证：[Apache License 2.0](LICENSE)，另见 [NOTICE](NOTICE)
 - 本仓库为独立维护的衍生版本，**并非原作者的官方发布**；原项目的版权声明与许可条款继续适用。
 
