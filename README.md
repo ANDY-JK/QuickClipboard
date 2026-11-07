@@ -8,9 +8,6 @@
 <div align="center">
   <img src="readme-assets/logo.png" alt="QuickClipboard Logo" width="120">
   <br><br>
-  <a href="https://github.com/mosheng1/QuickClipboard/stargazers">
-    <img src="https://img.shields.io/github/stars/mosheng1/QuickClipboard?style=for-the-badge&logo=github&color=yellow" alt="Stars">
-  </a>
   <a href="https://github.com/mosheng1/QuickClipboard/releases">
     <img src="https://img.shields.io/github/v/release/mosheng1/QuickClipboard?style=for-the-badge&label=Release&color=brightgreen" alt="Release">
   </a>
@@ -30,7 +27,7 @@
 
 ## 简介
 
-**QuickClipboard** 是一款跨平台剪贴板增强工具（现支持Windows，Android），基于 Tauri 2 + Rust + React 构建。它在你复制的那一刻就开始工作——自动记录文本、图片、富文本、文件，让你随时找回曾经复制过的任何内容。不只是记录，QuickClipboard 还集成了贴图、OCR、WebDAV 同步与局域网同步/传输等能力，是日常办公效率的全面提升。
+**QuickClipboard** 是一款跨平台剪贴板增强工具（现支持Windows，Android），基于 Tauri 2 + Rust + React 构建。它在你复制的那一刻就开始工作——自动记录文本、图片、富文本、文件，让你随时找回曾经复制过的任何内容。不只是记录，QuickClipboard 还集成了贴图、OCR 等能力，是日常办公效率的全面提升。
 
 > 原生性能，内存占用低，启动即用，常驻系统托盘。
 
@@ -47,14 +44,16 @@
 | Emoji / 符号 / 图库 | Emoji 大全 · 符号大全 · 自定义图片 / GIF 图库 · 最近使用 · 拖拽 / 点击即用                                          |
 | 贴图到屏幕          | 桌面置顶贴图 · 拖拽缩放 / 置顶 · 复制 / 另存为                                                                      |
 | OCR 识别            | 图片 OCR · 一键提取并复制文字                                                                                        |
-| 同步 / 传输         | WebDAV 全同步 · 局域网 HTTP 直连 · 配对码连接 · 自动推拉 · 文件发送                                                |
+| 同步 / 传输         | 已移除（WebDAV 同步与局域网同步/传输不再提供）                                                                      |
 | 边缘吸附与窗口      | 屏幕边缘自动隐藏 · 跟随光标唤出 · 窗口置顶 · 记忆位置 / 尺寸 · 标题栏方向切换                                       |
 | 个性化              | 跟随系统 / 明暗主题 / 超级背景 · 多套主题风格 · 自定义背景 / 模糊 · 自定义字体 · 动画开关                           |
 | 低内存模式          | 自动或手动切换轻量模式 · 即时恢复完整界面 · 告别内存焦虑（低占用模式占用仅~10MB）                                   |
 | 专项后台优化        | 进入后台自动清理内存占用 · 暂停前端更新 · 降低系统资源占用（后台时内存占用~50MB）                                   |
 | 数据管理            | ZIP 导入导出 · 备份恢复 · 自定义存储路径 · 数据迁移 / 合并 · 清空历史 · 便携模式                                    |
 | 应用过滤            | 已过滤应用列表 · 剪贴板监听过滤 · 前台禁用所有功能 · 进程级规则                                                     |
-| 系统集成            | 托盘常驻 · 开机自启动 · 自动更新 · 管理员权限运行 · 启动通知                                                        |
+| 系统集成            | 托盘常驻 · 开机自启动 · 管理员权限运行 · 启动通知                                                                    |
+
+> 注意：WebDAV 同步、局域网同步/传输与自动更新功能已移除；如需获取新版本，请前往 [GitHub Releases](https://github.com/mosheng1/QuickClipboard/releases) 手动下载更新。
 
 ---
 
@@ -155,85 +154,9 @@
 | **绿色版**<br>`QuickClipboard_0.5.0.exe`                |       免安装，双击即可使用 |      ![下载量](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0.exe?label=)      | [![下载绿色版](https://img.shields.io/badge/下载-绿色版-orange?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0.exe)            |
 | **便携版**<br>`QuickClipboard_0.5.0_portable.exe`       |      更适合放U盘或移动使用 | ![下载量](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0_portable.exe?label=)  | [![下载便携版](https://img.shields.io/badge/下载-便携版-green?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0_portable.exe)    |
 | **安卓版**<br>`QuickClipboard_Android_v1.0.4.apk`       |    适用于 Android 设备安装 | ![下载量](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_Android_v1.0.4.apk?label=)  | [![下载安卓版](https://img.shields.io/badge/下载-安卓版-success?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.4.0/QuickClipboard_Android_v1.0.4.apk)  |
-| **网盘下载**                                            |    GitHub 较慢时的备用渠道 |                                                          —                                                           | [![网盘下载](https://img.shields.io/badge/网盘下载-点击进入-red?style=for-the-badge)](https://www.123912.com/s/A9Ckjv-Vu75v?pwd=UhWA#)                                                        |
 
 ---
 
-## 官方网站 · 视频教程 · 社群交流
-
-<div align="center">
-
-<a href="https://space.bilibili.com/438982697" target="_blank">
-  <img src="https://img.shields.io/badge/Bilibili-功能演示视频-00A1D6?style=for-the-badge&logo=bilibili" alt="Bilibili">
-</a>
-
-<p style="margin-top:6px; margin-bottom:18px;">
-  含功能演示、使用教程、安装说明与常见问题
-</p>
-
-<a href="https://quickclipboard.cn/" target="_blank">
-  <img src="https://img.shields.io/badge/官方网站-quickclipboard.cn-blue?style=for-the-badge&logo=firefox-browser" alt="官网">
-</a>
-
-<p style="margin-top:6px; margin-bottom:24px;">
-  获取最新版本、下载镜像、文档资料与更多内容
-</p>
-
-<p style="margin-top:10px; margin-bottom:12px;">
-  扫码或搜索号码加入：
-</p>
-
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-        <img src="src/assets/pD_1.png" alt="频道二维码" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>频道：</strong>pd80680380</div>
-      <div style="margin-top:10px;">
-        <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-          <img src="https://img.shields.io/badge/立即加入-3b82f6?style=for-the-badge" alt="立即加入" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-        <img src="src/assets/qG_1.png" alt="群聊1二维码" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>群聊1：</strong>725313287</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-          <img src="https://img.shields.io/badge/立即加入-3b82f6?style=for-the-badge" alt="立即加入" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-        <img src="src/assets/qG_2.png" alt="群聊2二维码" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>群聊2：</strong>1033556729</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-          <img src="https://img.shields.io/badge/立即加入-3b82f6?style=for-the-badge" alt="立即加入" />
-        </a>
-      </div>
-    </td>
-  </tr>
-</table>
-
-</div>
-
----
-
-## 支持与赞助
-
-<div align="center">
-  <p>如果你觉得这个项目有帮助，欢迎 Star、Fork 或通过赞赏支持开发。</p>
-  <img src="src/assets/wxzsm.png" alt="赞赏码" width="240">
-</div>
-
-
----
 
 ## 开发与构建
 
@@ -264,3 +187,14 @@ npm run test:rust             # Rust 单元测试
 ## 许可证
 
  本项目基于 [Apache License 2.0](LICENSE) 开源。
+
+## 来源与许可
+
+本项目是基于原版 [QuickClipboard](https://github.com/mosheng1/QuickClipboard) 二次开发的独立维护版本。原项目由 **MoSheng** 创建，并以 [Apache License 2.0](LICENSE) 许可发布。
+
+- 原仓库：<https://github.com/mosheng1/QuickClipboard>
+- 原版权声明：Copyright 2025 MoSheng
+- 许可证：[Apache License 2.0](LICENSE)，另见 [NOTICE](NOTICE)
+- 本仓库为独立维护的衍生版本，**并非原作者的官方发布**；原项目的版权声明与许可条款继续适用。
+
+原仓库的徽章、下载链接、应用内 GitHub 入口与 Discussions 链接均保留，用于标注上游来源。

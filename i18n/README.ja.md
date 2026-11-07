@@ -8,9 +8,6 @@
 <div align="center">
   <img src="../readme-assets/logo.png" alt="QuickClipboard Logo" width="120">
   <br><br>
-  <a href="https://github.com/mosheng1/QuickClipboard/stargazers">
-    <img src="https://img.shields.io/github/stars/mosheng1/QuickClipboard?style=for-the-badge&logo=github&color=yellow" alt="Stars">
-  </a>
   <a href="https://github.com/mosheng1/QuickClipboard/releases">
     <img src="https://img.shields.io/github/v/release/mosheng1/QuickClipboard?style=for-the-badge&label=Release&color=brightgreen" alt="Release">
   </a>
@@ -30,7 +27,7 @@
 
 ## 紹介
 
-**QuickClipboard** は、Tauri 2 + Rust + React で構築されたクロスプラットフォームのクリップボード強化ツールです（現在 Windows と Android に対応）。コピーした瞬間から自動的にテキスト、画像、リッチテキスト、ファイルを記録し、過去にコピーした内容をいつでも取り戻せます。記録だけでなく、画像ピン留め、OCR、WebDAV 同期、LAN 同期/転送などの機能も統合しており、日常業務の生産性を大幅に向上させます。
+**QuickClipboard** は、Tauri 2 + Rust + React で構築されたクロスプラットフォームのクリップボード強化ツールです（現在 Windows と Android に対応）。コピーした瞬間から自動的にテキスト、画像、リッチテキスト、ファイルを記録し、過去にコピーした内容をいつでも取り戻せます。記録だけでなく、画像ピン留め、OCR などの機能も統合しており、日常業務の生産性を大幅に向上させます。
 
 > ネイティブパフォーマンス、低メモリ使用量、起動後すぐに使用可能、システムトレイ常駐。
 
@@ -47,14 +44,16 @@
 | Emoji / 記号 / ギャラリー   | 絵文字大全 · 記号大全 · カスタム画像 / GIF ギャラリー · 最近使用 · ドラッグまたはクリックで使用 |
 | 画面にピン留め              | デスクトップ固定表示 · ドラッグでリサイズ / 固定 · コピー / 名前を付けて保存 |
 | OCR 認識                    | 画像 OCR · ワンクリックでテキスト抽出とコピー                                                                        |
-| 同期 / 転送                 | WebDAV フル同期 · LAN HTTP 直接接続 · ペアリングコード接続 · 自動プッシュ/プル · ファイル送信                           |
+| 同期 / 転送                 | 削除済み（WebDAV 同期と LAN 同期/転送は提供終了）                                                                     |
 | エッジスナップとウィンドウ  | 画面端で自動非表示 · カーソル追従で呼び出し · ウィンドウ固定 · 位置 / サイズを記憶 · タイトルバー方向切替                |
 | パーソナライズ              | システム追従 / ライト・ダークテーマ / スーパー背景 · 複数のテーマスタイル · カスタム背景 / ぼかし · カスタムフォント · アニメーション切替 |
 | 低メモリモード              | 自動または手動で軽量モードに切替 · 即時に完全 UI 復元 · メモリ不足の心配無用（低メモリモードで約 10MB）                   |
 | バックグラウンド最適化      | バックグラウンド時に自動メモリ解放 · フロントエンド更新停止 · システムリソース使用量削減（バックグラウンドで約 50MB）       |
 | データ管理                  | ZIP インポート / エクスポート · バックアップと復元 · カスタム保存先 · データ移行 / マージ · 履歴クリア · ポータブルモード    |
 | アプリフィルタリング        | フィルター対象アプリ一覧 · クリップボード監視フィルター · フォアグラウンド時に全機能を無効化 · プロセスレベルルール |
-| システム連携                | トレイ常駐 · 自動起動 · 自動更新 · 管理者権限で実行 · 起動通知                                                        |
+| システム連携                | トレイ常駐 · 自動起動 · 管理者権限で実行 · 起動通知                                                                    |
+
+> 注意：WebDAV 同期、LAN 同期/転送、自動更新は削除されました。新しいバージョンは [GitHub Releases](https://github.com/mosheng1/QuickClipboard/releases) から手動でダウンロードしてください。
 
 ---
 
@@ -155,85 +154,9 @@
 | **ポータブル版**<br>`QuickClipboard_0.5.0.exe`              |       インストール不要、ダブルクリックで使用 | ![ダウンロード](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0.exe?label=)            | [![ダウンロード ポータブル](https://img.shields.io/badge/ダウンロード-ポータブル版-orange?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0.exe)    |
 | **USB ポータブル版**<br>`QuickClipboard_0.5.0_portable.exe` |       USB メモリやモバイル利用に最適 | ![ダウンロード](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0_portable.exe?label=)    | [![ダウンロード USB](https://img.shields.io/badge/ダウンロード-USBポータブル版-green?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0_portable.exe) |
 | **Android 版**<br>`QuickClipboard_Android_v1.0.4.apk`       |     Android 端末向け | ![ダウンロード](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_Android_v1.0.4.apk?label=)    | [![ダウンロード Android](https://img.shields.io/badge/ダウンロード-Android-success?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.4.0/QuickClipboard_Android_v1.0.4.apk)  |
-| **クラウドドライブ**                                          |    GitHub が遅い場合の代替手段 |                                                          —                                                                    | [![クラウドドライブ](https://img.shields.io/badge/クラウドドライブ-クリック-red?style=for-the-badge)](https://www.123912.com/s/A9Ckjv-Vu75v?pwd=UhWA#)                                              |
 
 ---
 
-## 公式サイト · チュートリアル · コミュニティ
-
-<div align="center">
-
-<a href="https://space.bilibili.com/438982697" target="_blank">
-  <img src="https://img.shields.io/badge/Bilibili-デモ動画-00A1D6?style=for-the-badge&logo=bilibili" alt="Bilibili">
-</a>
-
-<p style="margin-top:6px; margin-bottom:18px;">
-  機能デモ、使い方チュートリアル、インストールガイド、よくある質問
-</p>
-
-<a href="https://quickclipboard.cn/" target="_blank">
-  <img src="https://img.shields.io/badge/公式サイト-quickclipboard.cn-blue?style=for-the-badge&logo=firefox-browser" alt="公式サイト">
-</a>
-
-<p style="margin-top:6px; margin-bottom:24px;">
-  最新バージョン、ダウンロードミラー、ドキュメントなどを入手
-</p>
-
-<p style="margin-top:10px; margin-bottom:12px;">
-  QR コードをスキャンするか、グループ番号を検索して参加：
-</p>
-
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-        <img src="../src/assets/pD_1.png" alt="チャンネルQRコード" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>チャンネル：</strong>pd80680380</div>
-      <div style="margin-top:10px;">
-        <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-          <img src="https://img.shields.io/badge/今すぐ参加-3b82f6?style=for-the-badge" alt="今すぐ参加" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-        <img src="../src/assets/qG_1.png" alt="グループ1QRコード" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>グループ1：</strong>725313287</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-          <img src="https://img.shields.io/badge/今すぐ参加-3b82f6?style=for-the-badge" alt="今すぐ参加" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-        <img src="../src/assets/qG_2.png" alt="グループ2QRコード" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>グループ2：</strong>1033556729</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-          <img src="https://img.shields.io/badge/今すぐ参加-3b82f6?style=for-the-badge" alt="今すぐ参加" />
-        </a>
-      </div>
-    </td>
-  </tr>
-</table>
-
-</div>
-
----
-
-## サポートとスポンサー
-
-<div align="center">
-  <p>このプロジェクトが役に立ったと思われたら、Star、Fork、または寄付で開発を支援してください。</p>
-  <img src="../src/assets/wxzsm.png" alt="寄付QRコード" width="240">
-</div>
-
-
----
 
 ## 開発とビルド
 
@@ -258,4 +181,15 @@ npm run tauri:build
 
 ## ライセンス
 
-このプロジェクトは [Apache License 2.0](LICENSE) の下で公開されています。
+このプロジェクトは [Apache License 2.0](../LICENSE) の下で公開されています。
+
+## 出典とライセンス
+
+本プロジェクトは、オリジナルの [QuickClipboard](https://github.com/mosheng1/QuickClipboard) を基に二次開発された、独立して保守される派生版です。オリジナルは **MoSheng** によって作成され、[Apache License 2.0](../LICENSE) の下で公開されています。
+
+- オリジナルリポジトリ：<https://github.com/mosheng1/QuickClipboard>
+- オリジナルの著作権表示：Copyright 2025 MoSheng
+- ライセンス：[Apache License 2.0](../LICENSE)、[NOTICE](../NOTICE) も参照
+- 本リポジトリは独立して保守される派生版であり、**原作者による公式リリースではありません**。オリジナルの著作権表示およびライセンス条件は引き続き適用されます。
+
+オリジナルリポジトリのバッジ、ダウンロードリンク、アプリ内 GitHub 導線、Discussions リンクは、上流の出典表示のため保持しています。

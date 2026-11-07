@@ -8,9 +8,6 @@
 <div align="center">
   <img src="../readme-assets/logo.png" alt="QuickClipboard Logo" width="120">
   <br><br>
-  <a href="https://github.com/mosheng1/QuickClipboard/stargazers">
-    <img src="https://img.shields.io/github/stars/mosheng1/QuickClipboard?style=for-the-badge&logo=github&color=yellow" alt="Stars">
-  </a>
   <a href="https://github.com/mosheng1/QuickClipboard/releases">
     <img src="https://img.shields.io/github/v/release/mosheng1/QuickClipboard?style=for-the-badge&label=Release&color=brightgreen" alt="Release">
   </a>
@@ -30,7 +27,7 @@
 
 ## Introduction
 
-**QuickClipboard** is a cross-platform clipboard enhancement tool (currently supports Windows and Android), built with Tauri 2 + Rust + React. It starts working the moment you copy — automatically recording text, images, rich text, and files, so you can always retrieve anything you've ever copied. Beyond just recording, QuickClipboard integrates image pinning, OCR, WebDAV sync, LAN sync/transfer, and more, delivering a comprehensive productivity boost for daily work.
+**QuickClipboard** is a cross-platform clipboard enhancement tool (currently supports Windows and Android), built with Tauri 2 + Rust + React. It starts working the moment you copy — automatically recording text, images, rich text, and files, so you can always retrieve anything you've ever copied. Beyond just recording, QuickClipboard integrates image pinning, OCR, and more, delivering a comprehensive productivity boost for daily work.
 
 > Native performance, low memory footprint, ready to use on launch, lives in your system tray.
 
@@ -47,14 +44,16 @@
 | Emoji / Symbols / Gallery | Complete Emoji set · Symbol library · Custom image / GIF gallery · Recently used · Drag or click to use            |
 | Pin to Screen           | Desktop pinned images · Drag to resize / pin · Copy / save as                                                        |
 | OCR Recognition         | Image OCR · One-click extract and copy text                                                                          |
-| Sync / Transfer         | WebDAV full sync · LAN HTTP direct connection · Pairing code connection · Auto push/pull · File sending              |
+| Sync / Transfer         | Removed (WebDAV sync and LAN sync/transfer are no longer available)                                                |
 | Edge Snap & Window      | Auto-hide at screen edge · Summon by cursor · Pin window · Remember position / size · Title bar orientation switch  |
 | Personalization         | Follow system / Light-Dark theme / Super background · Multiple theme styles · Custom background / blur · Custom font · Animation toggle |
 | Low Memory Mode         | Auto or manual switch to lightweight mode · Instant full-UI recovery · Say goodbye to memory anxiety (~10MB in low-memory mode) |
 | Background Optimization | Auto-clean memory when in background · Pause frontend updates · Reduce system resource usage (~50MB in background)   |
 | Data Management         | ZIP import / export · Backup & restore · Custom storage path · Data migration / merge · Clear history · Portable mode |
 | App Filtering           | Filtered apps list · Clipboard monitoring filtering · Disable all features in foreground · Process-level rules |
-| System Integration      | System tray resident · Auto-start on boot · Auto-update · Run as administrator · Startup notification                |
+| System Integration      | System tray resident · Auto-start on boot · Run as administrator · Startup notification                            |
+
+> Note: WebDAV sync, LAN sync/transfer, and auto-update have been removed. To get new versions, download updates manually from [GitHub Releases](https://github.com/mosheng1/QuickClipboard/releases).
 
 ---
 
@@ -155,85 +154,9 @@
 | **Portable (Standalone)**<br>`QuickClipboard_0.5.0.exe`      |     No installation required  | ![Downloads](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0.exe?label=)       | [![Download Portable](https://img.shields.io/badge/Download-Portable-orange?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0.exe)    |
 | **Portable (USB)**<br>`QuickClipboard_0.5.0_portable.exe`    | Ideal for USB drives & mobile use | ![Downloads](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_0.5.0_portable.exe?label=) | [![Download USB](https://img.shields.io/badge/Download-Portable%20USB-green?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.5.0/QuickClipboard_0.5.0_portable.exe) |
 | **Android APK**<br>`QuickClipboard_Android_v1.0.4.apk`       |        For Android devices    | ![Downloads](https://img.shields.io/github/downloads/mosheng1/QuickClipboard/QuickClipboard_Android_v1.0.4.apk?label=) | [![Download Android](https://img.shields.io/badge/Download-Android-success?style=for-the-badge)](https://github.com/mosheng1/QuickClipboard/releases/download/v0.4.0/QuickClipboard_Android_v1.0.4.apk) |
-| **Cloud Drive**                                              | Alternative if GitHub is slow |                                                      —                                                              | [![Cloud Drive](https://img.shields.io/badge/Cloud%20Drive-Click%20Here-red?style=for-the-badge)](https://www.123912.com/s/A9Ckjv-Vu75v?pwd=UhWA#)                                            |
 
 ---
 
-## Website · Tutorials · Community
-
-<div align="center">
-
-<a href="https://space.bilibili.com/438982697" target="_blank">
-  <img src="https://img.shields.io/badge/Bilibili-Demo%20Videos-00A1D6?style=for-the-badge&logo=bilibili" alt="Bilibili">
-</a>
-
-<p style="margin-top:6px; margin-bottom:18px;">
-  Features demos, usage tutorials, installation guides, and FAQs
-</p>
-
-<a href="https://quickclipboard.cn/" target="_blank">
-  <img src="https://img.shields.io/badge/Website-quickclipboard.cn-blue?style=for-the-badge&logo=firefox-browser" alt="Website">
-</a>
-
-<p style="margin-top:6px; margin-bottom:24px;">
-  Get the latest version, download mirrors, documentation, and more
-</p>
-
-<p style="margin-top:10px; margin-bottom:12px;">
-  Scan the QR code or search for the group number to join:
-</p>
-
-<table>
-  <tr>
-    <td align="center" width="33%">
-      <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-        <img src="../src/assets/pD_1.png" alt="Channel QR Code" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>Channel:</strong> pd80680380</div>
-      <div style="margin-top:10px;">
-        <a href="https://pd.qq.com/s/blp3j847c" target="_blank">
-          <img src="https://img.shields.io/badge/Join%20Now-3b82f6?style=for-the-badge" alt="Join Now" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-        <img src="../src/assets/qG_1.png" alt="Group 1 QR Code" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>Group 1:</strong> 725313287</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/nUCO76MX9C" target="_blank">
-          <img src="https://img.shields.io/badge/Join%20Now-3b82f6?style=for-the-badge" alt="Join Now" />
-        </a>
-      </div>
-    </td>
-    <td align="center" width="33%">
-      <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-        <img src="../src/assets/qG_2.png" alt="Group 2 QR Code" width="170" />
-      </a>
-      <div style="margin-top:8px;"><strong>Group 2:</strong> 1033556729</div>
-      <div style="margin-top:10px;">
-        <a href="https://qm.qq.com/q/O5zOi3uTuy" target="_blank">
-          <img src="https://img.shields.io/badge/Join%20Now-3b82f6?style=for-the-badge" alt="Join Now" />
-        </a>
-      </div>
-    </td>
-  </tr>
-</table>
-
-</div>
-
----
-
-## Support & Sponsorship
-
-<div align="center">
-  <p>If you find this project helpful, feel free to Star, Fork, or support development via donations.</p>
-  <img src="../src/assets/wxzsm.png" alt="Donation QR Code" width="240">
-</div>
-
-
----
 
 ## Development & Build
 
@@ -258,4 +181,15 @@ npm run tauri:build
 
 ## License
 
-This project is licensed under the [Apache License 2.0](LICENSE).
+This project is licensed under the [Apache License 2.0](../LICENSE).
+
+## Provenance and License
+
+This project is an independently maintained derivative based on the original [QuickClipboard](https://github.com/mosheng1/QuickClipboard), originally created by **MoSheng** and released under the [Apache License 2.0](../LICENSE).
+
+- Original repository: <https://github.com/mosheng1/QuickClipboard>
+- Original copyright notice: Copyright 2025 MoSheng
+- License: [Apache License 2.0](../LICENSE), see also [NOTICE](../NOTICE)
+- This repository is an independently maintained derivative and is **not an official release of the original author**. The original copyright notice and license terms continue to apply.
+
+The original repository's badges, download links, in-app GitHub entry and Discussions link are retained to credit the upstream project.
