@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSnapshot } from 'valtio';
 import { open } from '@tauri-apps/plugin-dialog';
-import { openPath } from '@tauri-apps/plugin-opener';
+import { openAppDataFolder } from '@shared/api/pathActions';
 import SettingsSection from '../components/SettingsSection';
 import SettingItem from '../components/SettingItem';
 import Toggle from '@shared/components/ui/Toggle';
@@ -16,6 +16,7 @@ import {
   disposeExtension,
   extensionsStore,
   initExtensions,
+  preflightExtensions,
   reloadExtensions,
   syncExtensionsEnabled,
 } from '@/extensions/host/registry';
@@ -38,8 +39,14 @@ function ExtensionsSection({ settings, onSettingChange }) {
   const [uninstallingId, setUninstallingId] = useState('');
 
   useEffect(() => {
-    initExtensions();
-  }, []);
+    // 设置窗口的注册表默认 enabled=true；必须先用已保存的开关状态校准，
+    // 否则「停用」状态下设置页仍会预检并创建 Worker。
+    syncExtensionsEnabled(settings.extensionsEnabled !== false);
+    initExtensions()
+      // 设置页主动做一次加载预检，让入口缺失/导出不合规在列表里立即可见。
+      .then(() => preflightExtensions())
+      .catch((error) => console.warn('扩展预检失败:', error));
+  }, [settings.extensionsEnabled]);
 
   useEffect(() => {
     getDataDirectory()
@@ -52,18 +59,25 @@ function ExtensionsSection({ settings, onSettingChange }) {
       return;
     }
     try {
-      await openPath(extensionsDir);
+      await openAppDataFolder('extensions');
       setOpenError('');
     } catch (error) {
       setOpenError(String((error && error.message) || error));
     }
   };
 
+  // 安装/卸载/重载后的统一收口：重新扫描磁盘 -> 同步启用态 -> 后台预检加载。
+  // 预检不阻塞按钮状态，失败时在列表里逐项展示。
+  const refreshExtensions = async (reason) => {
+    await reloadExtensions({ reason });
+    syncExtensionsEnabled(settings.extensionsEnabled !== false);
+    preflightExtensions().catch((error) => console.warn('扩展预检失败:', error));
+  };
+
   const handleReload = async () => {
     setReloading(true);
     try {
-      await reloadExtensions();
-      syncExtensionsEnabled(settings.extensionsEnabled !== false);
+      await refreshExtensions('manual-reload');
       toast.success(t('settings.extensions.reloaded'));
     } catch (error) {
       toast.error(t('settings.extensions.reloadFailed'));
@@ -91,18 +105,18 @@ function ExtensionsSection({ settings, onSettingChange }) {
           toast.error(t('settings.extensions.installFailed'), { duration: 6000 });
           return;
         }
-        await reloadExtensions();
-        syncExtensionsEnabled(settings.extensionsEnabled !== false);
+        await refreshExtensions('install');
         toast.success(
           t('settings.extensions.installedOverwrite', { name: overwritten.name || overwritten.id })
         );
         return;
       }
 
-      await reloadExtensions();
-      syncExtensionsEnabled(settings.extensionsEnabled !== false);
+      await refreshExtensions('install');
       toast.success(t('settings.extensions.installed', { name: result.name || result.id }));
     } catch (error) {
+      // 安装失败也重新扫描一次，确保界面与磁盘真实状态一致（后端已负责清理临时目录）。
+      await refreshExtensions('install-failed').catch(() => {});
       // 失败原因原样展示，便于用户判断是包坏了还是路径不对。
       toast.error(`${t('settings.extensions.installFailed')}: ${errorText(error)}`, {
         duration: 8000,
@@ -157,12 +171,11 @@ function ExtensionsSection({ settings, onSettingChange }) {
       // 先释放 Worker 再删目录，避免 Windows 上文件被占用导致删除失败。
       disposeExtension(ext.id);
       await uninstallExtension(ext.id);
-      await reloadExtensions();
-      syncExtensionsEnabled(settings.extensionsEnabled !== false);
+      await refreshExtensions('uninstall');
       toast.success(t('settings.extensions.uninstalled', { name }));
     } catch (error) {
       // 删除失败时把磁盘状态重新同步回来，避免界面显示一个其实还在的扩展。
-      await reloadExtensions().catch(() => {});
+      await refreshExtensions('uninstall-failed').catch(() => {});
       toast.error(`${t('settings.extensions.uninstallFailed')}: ${errorText(error)}`, {
         duration: 8000,
       });
@@ -170,6 +183,13 @@ function ExtensionsSection({ settings, onSettingChange }) {
       setUninstallingId('');
     }
   };
+
+  // 清单级加载失败（入口缺失/导出不合规/Worker 崩溃）的聚合提示，
+  // 避免只有逐条小字错误、整体看起来像「一切正常」。
+  const loadFailedCount = snap.extensions.reduce(
+    (count, ext) => (ext.valid && snap.errors[ext.id] ? count + 1 : count),
+    0
+  );
 
   return (
     <>
@@ -186,6 +206,10 @@ function ExtensionsSection({ settings, onSettingChange }) {
             onChange={(checked) => {
               syncExtensionsEnabled(checked);
               onSettingChange('extensionsEnabled', checked);
+              if (checked) {
+                // 启用后立即预检，加载失败无需等主窗口使用就能在列表里看到。
+                preflightExtensions().catch((error) => console.warn('扩展预检失败:', error));
+              }
             }}
           />
         </SettingItem>
@@ -249,6 +273,12 @@ function ExtensionsSection({ settings, onSettingChange }) {
               {t('settings.extensions.reload')}
             </Button>
           </div>
+
+          {settings.extensionsEnabled !== false && loadFailedCount > 0 && (
+            <p className="mb-3 text-xs leading-5 text-red-500">
+              {t('settings.extensions.loadFailedHint', { count: loadFailedCount })}
+            </p>
+          )}
 
           {snap.extensions.length === 0 ? (
             <p className="text-xs leading-5 text-qc-fg-subtle">{t('settings.extensions.empty')}</p>

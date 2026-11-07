@@ -53,7 +53,7 @@ const __qcReady = import(QC_EXTENSION_URL).then(
 
 self.addEventListener('message', async (event) => {
   const message = event.data || {};
-  if (message.type !== 'identify') return;
+  if (message.type !== 'identify' && message.type !== 'probe') return;
   const requestId = message.requestId;
   // category 是宿主侧判定「条目级 / 运行级」的唯一依据：
   // 入口加载失败属于运行级，单条 identify 抛错属于条目级。
@@ -77,6 +77,13 @@ self.addEventListener('message', async (event) => {
 
   if (!__qcExtension || typeof __qcExtension.identify !== 'function') {
     reply([], __qcLoadError || '扩展未导出 extension.identify 函数', 'RUNTIME_ERROR');
+    return;
+  }
+
+  // probe 只验证入口可加载且导出约定成立，不执行业务识别，
+  // 供设置页在扩展真正被使用前就暴露加载失败。
+  if (message.type === 'probe') {
+    reply([]);
     return;
   }
 
@@ -259,7 +266,7 @@ class ExtensionRuntime {
     }
   }
 
-  identify(context) {
+  request(type, context) {
     if (this.dead) {
       return Promise.reject(createRuntimeError('扩展 Worker 不可用', ERROR_CATEGORIES.RUNTIME))
     }
@@ -277,15 +284,15 @@ class ExtensionRuntime {
         // 超时只打断当前请求；连续超时才说明 Worker 真的不健康。
         this.pending.delete(requestId)
         this.failureCount += 1
-        reject(createRuntimeError(`识别超时（${timeoutMs}ms）`, ERROR_CATEGORIES.RUNTIME))
+        reject(createRuntimeError(`扩展响应超时（${timeoutMs}ms）`, ERROR_CATEGORIES.RUNTIME))
         if (this.failureCount >= LIMITS.identifyFailureThreshold) {
-          this.fail(`连续 ${this.failureCount} 次识别失败`)
+          this.fail(`连续 ${this.failureCount} 次扩展响应失败`)
         }
       }, timeoutMs)
 
       this.pending.set(requestId, { resolve, reject, timer })
       try {
-        this.worker.postMessage({ type: MESSAGE_TYPES.IDENTIFY, requestId, context })
+        this.worker.postMessage({ type, requestId, context })
       } catch (error) {
         this.pending.delete(requestId)
         clearTimeout(timer)
@@ -296,6 +303,15 @@ class ExtensionRuntime {
         ))
       }
     })
+  }
+
+  identify(context) {
+    return this.request(MESSAGE_TYPES.IDENTIFY, context)
+  }
+
+  // 预检：只加载入口模块并校验导出约定，不调用 identify，不产生业务副作用。
+  probe() {
+    return this.request(MESSAGE_TYPES.PROBE, {})
   }
 
   fail(reason) {

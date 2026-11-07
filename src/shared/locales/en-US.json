@@ -696,6 +696,7 @@
       "statusValid": "Active",
       "statusInvalid": "Invalid",
       "error": "Error",
+      "loadFailedHint": "{{count}} extension(s) failed to load and were disabled automatically. Check the entry file and export contract.",
       "install": "Install extension",
       "installDesc": "Install from a .zip package or an existing extension folder. Archive paths and sizes are validated before extraction, and a failed install leaves no leftover directory.",
       "installFromZip": "From package",

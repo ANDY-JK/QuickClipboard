@@ -2,9 +2,54 @@
 // React 列表只读取这里发布的识别结果，识别过程完全不阻塞首屏。
 
 import { invoke } from '@tauri-apps/api/core'
+import { emit, listen } from '@tauri-apps/api/event'
 import { proxy } from 'valtio'
 import { createExtensionRuntime } from './runtime'
 import { ERROR_CATEGORIES, LIMITS } from '../protocol'
+
+// 跨窗口同步事件：每个窗口是独立 JS 运行时，扩展注册表不能靠模块单例共享，
+// 安装/卸载/重载后由变更方广播，其他窗口收到后重新扫描磁盘。
+const REGISTRY_CHANGED_EVENT = 'qc-extensions-registry-changed'
+const RUNTIME_ERROR_EVENT = 'qc-extensions-runtime-error'
+// 用于过滤自己发出的广播（Tauri emit 会送达全部窗口，包括发送方自己）。
+const WINDOW_ORIGIN = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+// 元数据展示上限：manifest 本身已有 64KB 体积上限，这里再收窄到 UI 可承受的量级，
+// 防止异常清单把超长字符串直接灌进列表与 chip。
+const META_LIMITS = {
+  name: 80,
+  version: 40,
+  description: 200,
+  error: 300,
+}
+
+function normalizeMeta(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return null
+  }
+
+  const id = typeof raw.id === 'string' ? raw.id.trim() : ''
+  if (!id) {
+    return null
+  }
+
+  const contentTypes = Array.isArray(raw.contentTypes)
+    ? raw.contentTypes.filter((type) => typeof type === 'string')
+    : []
+
+  return {
+    ...raw,
+    id,
+    name: typeof raw.name === 'string' ? raw.name.trim().slice(0, META_LIMITS.name) : '',
+    version: typeof raw.version === 'string' ? raw.version.trim().slice(0, META_LIMITS.version) : '',
+    description: typeof raw.description === 'string'
+      ? raw.description.trim().slice(0, META_LIMITS.description)
+      : '',
+    error: raw.error == null ? null : String(raw.error).slice(0, META_LIMITS.error),
+    contentTypes,
+    valid: Boolean(raw.valid),
+  }
+}
 
 export const extensionsStore = proxy({
   enabled: true,
@@ -71,6 +116,11 @@ const cacheRefCounts = new Map()
 const MAX_IDENTIFY_CACHE_ENTRIES = 2000
 let initPromise = null
 let generation = 0
+// 跨窗口同步：监听器只注册一次；同一时间只允许一次远端触发的重载。
+let syncSetupPromise = null
+let remoteReloadQueued = false
+let broadcastScheduled = false
+let pendingBroadcastReason = 'reload'
 
 let activeJobs = 0
 const jobQueue = []
@@ -176,16 +226,88 @@ export function clearExtensionResults() {
   clearResults()
 }
 
+function emitExtensionEvent(name, payload) {
+  emit(name, payload).catch((error) => {
+    // 事件权限缺失或窗口正在销毁时不应影响本地功能，只记录警告。
+    console.warn(`扩展状态广播失败（${name}）:`, error)
+  })
+}
+
+function broadcastRegistryChange(reason = 'reload') {
+  pendingBroadcastReason = reason
+  if (broadcastScheduled) return
+  broadcastScheduled = true
+  // 合并同一轮内的多次变更（例如卸载后紧接着重载），只广播一次。
+  Promise.resolve().then(() => {
+    broadcastScheduled = false
+    const nextReason = pendingBroadcastReason
+    pendingBroadcastReason = 'reload'
+    emitExtensionEvent(REGISTRY_CHANGED_EVENT, {
+      origin: WINDOW_ORIGIN,
+      reason: nextReason,
+    })
+  })
+}
+
+function broadcastRuntimeError(extensionId, reason) {
+  emitExtensionEvent(RUNTIME_ERROR_EVENT, { origin: WINDOW_ORIGIN, extensionId, reason })
+}
+
+async function handleRemoteRegistryChange() {
+  if (remoteReloadQueued) return
+  remoteReloadQueued = true
+  try {
+    // 远端广播对应磁盘上的真实变更，这里只重新扫描，不再回广播，避免窗口间循环触发。
+    await reloadExtensions({ broadcast: false })
+  } catch (error) {
+    console.warn('同步其他窗口的扩展变更失败:', error)
+  } finally {
+    remoteReloadQueued = false
+  }
+}
+
+function ensureExtensionSync() {
+  if (syncSetupPromise) {
+    return syncSetupPromise
+  }
+
+  syncSetupPromise = (async () => {
+    await listen(REGISTRY_CHANGED_EVENT, (event) => {
+      if (event?.payload?.origin === WINDOW_ORIGIN) return
+      handleRemoteRegistryChange()
+    })
+    await listen(RUNTIME_ERROR_EVENT, (event) => {
+      const payload = event?.payload || {}
+      if (payload.origin === WINDOW_ORIGIN) return
+      const extensionId = typeof payload.extensionId === 'string' ? payload.extensionId : ''
+      const reason = typeof payload.reason === 'string' ? payload.reason : ''
+      if (!extensionId || !reason) return
+      // 其他窗口已经判定该扩展不可用，本窗口直接跟随，避免重复创建 Worker 再失败一次。
+      applyExtensionError(extensionId, reason)
+    })
+  })().catch((error) => {
+    syncSetupPromise = null
+    console.warn('扩展状态同步监听器启动失败:', error)
+  })
+
+  return syncSetupPromise
+}
+
 export function initExtensions() {
   if (initPromise) {
     return initPromise
   }
 
+  ensureExtensionSync()
+
   initPromise = (async () => {
     extensionsStore.loading = true
     try {
       const list = await invoke('list_extensions')
-      extensionsStore.extensions = Array.isArray(list) ? list : []
+      const normalized = (Array.isArray(list) ? list : [])
+        .map(normalizeMeta)
+        .filter(Boolean)
+      extensionsStore.extensions = normalized
     } catch (error) {
       extensionsStore.extensions = []
       console.warn('加载扩展列表失败:', error)
@@ -198,7 +320,7 @@ export function initExtensions() {
   return initPromise
 }
 
-export async function reloadExtensions() {
+export async function reloadExtensions({ broadcast = true, reason = 'reload' } = {}) {
   disposeAll('扩展已重载')
   clearExtensionResults()
   failedExtensions.clear()
@@ -206,6 +328,9 @@ export async function reloadExtensions() {
   initPromise = null
   await initExtensions()
   extensionsStore.revision += 1
+  if (broadcast) {
+    broadcastRegistryChange(reason)
+  }
 }
 
 /**
@@ -229,9 +354,14 @@ export function disposeExtension(extensionId) {
     delete extensionsStore.errors[id]
   }
 
-  // 回收该扩展的识别缓存，并同步撤掉受影响条目里已发布的 chip。
+  dropExtensionCache(id)
+  extensionsStore.extensions = extensionsStore.extensions.filter((meta) => meta.id !== id)
+}
+
+// 回收某个扩展的识别缓存，并同步撤掉受影响条目里已发布的 chip。
+function dropExtensionCache(extensionId) {
   for (const [key, itemId] of Array.from(cacheItemIds)) {
-    if (!key.startsWith(`${id}:`)) continue
+    if (!key.startsWith(`${extensionId}:`)) continue
     identifyCache.delete(key)
     cacheItemIds.delete(key)
     const nextCount = (cacheRefCounts.get(itemId) || 1) - 1
@@ -242,8 +372,6 @@ export function disposeExtension(extensionId) {
       cacheRefCounts.set(itemId, nextCount)
     }
   }
-
-  extensionsStore.extensions = extensionsStore.extensions.filter((meta) => meta.id !== id)
 }
 
 export function syncExtensionsEnabled(enabled) {
@@ -278,15 +406,25 @@ function disposeAll(reason = '扩展运行时已重置') {
   runtimePromises.clear()
 }
 
-function markExtensionError(extensionId, reason) {
+// 本地（含远端事件）统一的失败落点：标记失败、撤运行时、撤已发布 chip。
+function applyExtensionError(extensionId, reason) {
+  const text = String(reason == null ? '' : reason).slice(0, META_LIMITS.error)
   failedExtensions.add(extensionId)
-  extensionsStore.errors[extensionId] = reason
+  extensionsStore.errors[extensionId] = text
   const runtime = runtimes.get(extensionId)
   if (runtime) {
     runtime.dispose()
     runtimes.delete(extensionId)
   }
-  console.warn(`[extension:${extensionId}] 已停用:`, reason)
+  dropExtensionCache(extensionId)
+  console.warn(`[extension:${extensionId}] 已停用:`, text)
+  return text
+}
+
+function markExtensionError(extensionId, reason) {
+  const text = applyExtensionError(extensionId, reason)
+  // 广播给其他窗口，让设置页（或主窗口）不必各自再踩一次同样的加载失败。
+  broadcastRuntimeError(extensionId, text)
 }
 
 function isApplicable(meta, item) {
@@ -333,7 +471,11 @@ async function getRuntime(meta) {
 
   try {
     const runtime = await runtimePromise
-    if (currentGeneration !== generation || !extensionsStore.enabled) {
+    if (
+      currentGeneration !== generation
+      || !extensionsStore.enabled
+      || failedExtensions.has(meta.id)
+    ) {
       runtime.dispose()
       return null
     }
@@ -446,6 +588,79 @@ export async function identifyItems(items) {
       }, taskGeneration).catch((error) => {
         if (error?.code !== ERROR_CATEGORIES.ABORT) {
           console.warn('扩展识别任务失败:', error)
+        }
+      })
+    )
+  )
+}
+
+let preflightPromise = null
+
+function releaseProbeRuntime(extensionId) {
+  const runtime = runtimes.get(extensionId)
+  if (!runtime) return
+  runtime.dispose()
+  runtimes.delete(extensionId)
+}
+
+/**
+ * 设置页专用预检：逐个加载入口模块并校验导出约定（不调用 identify）。
+ * 目的：让入口缺失、导出不合规、Worker 启动失败等问题在设置页立即可见，
+ * 而不是等主窗口第一次识别时才静默失败。
+ */
+export function preflightExtensions() {
+  if (preflightPromise) {
+    return preflightPromise
+  }
+  preflightPromise = runPreflight().finally(() => {
+    preflightPromise = null
+  })
+  return preflightPromise
+}
+
+async function runPreflight() {
+  if (!extensionsStore.enabled) {
+    return
+  }
+  if (!extensionsStore.loaded) {
+    await initExtensions()
+  }
+  if (!extensionsStore.enabled) {
+    return
+  }
+
+  const metas = extensionsStore.extensions.filter(
+    (meta) => meta.valid && !failedExtensions.has(meta.id)
+  )
+  if (metas.length === 0) {
+    return
+  }
+
+  const taskGeneration = generation
+  await Promise.all(
+    metas.map((meta) =>
+      enqueue(async () => {
+        if (taskGeneration !== generation || !extensionsStore.enabled) return
+        const runtime = await getRuntime(meta)
+        if (!runtime) return
+        try {
+          await runtime.probe()
+          // 设置页只做加载检查，不产生识别需求；探活成功后立即释放 Worker，
+          // 避免长期打开设置页时每个扩展都常驻一个 Worker。
+          releaseProbeRuntime(meta.id)
+        } catch (error) {
+          if (error?.code === ERROR_CATEGORIES.ABORT) return
+          // 只有 Worker 彻底不可用（入口加载失败/反复超时）才停用扩展并广播；
+          // 单次超时只记录，避免慢机器上误停用。
+          if (error?.code === ERROR_CATEGORIES.RUNTIME && runtime.unavailable) {
+            markExtensionError(meta.id, String((error && error.message) || error))
+          } else {
+            console.warn(`[extension:${meta.id}] 预检未通过（不影响其他扩展）:`, error)
+          }
+        }
+      }, taskGeneration).catch((error) => {
+        if (error?.code !== ERROR_CATEGORIES.ABORT) {
+          console.warn(`[extension:${meta.id}] 预检任务失败:`, error)
         }
       })
     )

@@ -9,6 +9,8 @@
 
 export const MESSAGE_TYPES = {
   IDENTIFY: 'identify',
+  // 只加载入口并校验导出约定，不执行 identify；用于设置页提前暴露加载失败。
+  PROBE: 'probe',
   RESULT: 'result',
   LOG: 'log',
 }
