@@ -1,5 +1,5 @@
-import emojiDataEn from 'emoji-picker-element-data/en/cldr/data.json';
-import emojiDataCn from 'emoji-picker-element-data/zh/cldr/data.json';
+// 中英两份 JSON 合计约 841KB，静态 import 会让它们进入首屏依赖图。
+// 这里改为动态 import，并且只加载当前语言的一份；切换语言时再按需加载另一份。
 
 export const GROUP_ID_MAP = {
   0: 'smileys-emotion',
@@ -109,35 +109,38 @@ let emojiDataCache = null;
 let emojiMetaCache = null;
 let emojiRowsCache = null;
 let emojiSkinSupport = null;
+let emojiLoadedLang = null;
+let emojiLoadPromise = null;
+let emojiLoadingLang = null;
 
-export const ensureEmojiData = () => {
-  if (emojiDataCache) return;
-  
-  const cnNames = {};
-  emojiDataCn.forEach(item => {
-    if (item.emoji && item.annotation) {
-      cnNames[item.emoji] = item.annotation;
-    }
-  });
+const EMOJI_DATA_LOADERS = {
+  en: () => import('emoji-picker-element-data/en/cldr/data.json'),
+  zh: () => import('emoji-picker-element-data/zh/cldr/data.json'),
+};
 
+function normalizeEmojiLang(lang) {
+  return String(lang || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+function buildEmojiData(rawData) {
   const grouped = {};
   const metaMap = {};
   const rowsCache = {};
   const skinSupport = new Map();
-  
-  emojiDataEn.forEach(item => {
+
+  rawData.forEach(item => {
     const groupId = GROUP_ID_MAP[item.group];
     if (!groupId) return;
-    
+
     if (!grouped[groupId]) grouped[groupId] = [];
     const entry = {
       emoji: item.emoji,
       name: item.annotation,
-      nameCn: cnNames[item.emoji] || item.annotation
+      nameCn: item.annotation
     };
     grouped[groupId].push(entry);
     metaMap[item.emoji] = entry;
-    
+
     if (item.skins && item.skins.length > 0) {
       skinSupport.set(item.emoji, item.skins.map(s => s.emoji));
     }
@@ -151,6 +154,33 @@ export const ensureEmojiData = () => {
   emojiMetaCache = metaMap;
   emojiRowsCache = rowsCache;
   emojiSkinSupport = skinSupport;
+}
+
+/**
+ * 按语言加载 emoji 数据；同一语言只加载一次，已加载其它语言时会重新构建。
+ * @param {string} lang 当前界面语言
+ * @returns {Promise<void>}
+ */
+export const ensureEmojiData = async (lang = 'en') => {
+  const targetLang = normalizeEmojiLang(lang);
+  if (emojiLoadedLang === targetLang && emojiDataCache) return;
+  if (emojiLoadPromise && emojiLoadingLang === targetLang) return emojiLoadPromise;
+
+  emojiLoadingLang = targetLang;
+  emojiLoadPromise = EMOJI_DATA_LOADERS[targetLang]()
+    .then(module => {
+      if (emojiLoadingLang !== targetLang) return;
+      buildEmojiData(module.default || []);
+      emojiLoadedLang = targetLang;
+    })
+    .finally(() => {
+      if (emojiLoadingLang === targetLang) {
+        emojiLoadPromise = null;
+        emojiLoadingLang = null;
+      }
+    });
+
+  return emojiLoadPromise;
 };
 
 export const getEmojiDataCache = () => emojiDataCache;

@@ -50,7 +50,7 @@ function uniquePlacements(list) {
   return result;
 }
 
-export default function Tooltip({
+function TooltipImpl({
   content,
   shortcut,
   placement = 'top',
@@ -61,17 +61,16 @@ export default function Tooltip({
   asChild = false,
   maxWidth = 320,
   forceOpen,
+  tooltipsEnabled = true,
   children,
 }) {
-  const settings = useSnapshot(settingsStore);
-
   const tooltipId = useId();
   const triggerRef = useRef(null);
   const tooltipRef = useRef(null);
   const openTimerRef = useRef(0);
   const closeTimerRef = useRef(0);
 
-  const globallyDisabled = !settings.tooltipsEnabled;
+  const globallyDisabled = !tooltipsEnabled;
   const isDisabled = disabled || globallyDisabled;
 
   const [open, setOpen] = useState(false);
@@ -320,7 +319,7 @@ export default function Tooltip({
         <div
           ref={tooltipRef}
           className={
-            `relative isolate px-2 py-1 rounded-md ${panelBgClass} text-[11px] font-medium text-qc-fg leading-snug ring-1 ring-qc-border ` +
+            'relative isolate px-2 py-1 rounded-md ' + panelBgClass + ' text-[11px] font-medium text-qc-fg leading-snug ring-1 ring-qc-border ' +
             getAnimationClass() +
             ' ' +
             (effectivePlacement === 'top'
@@ -401,5 +400,19 @@ export default function Tooltip({
       {tooltipNode}
     </>
   );
+}
+
+function TooltipWithSettings(props) {
+  const settings = useSnapshot(settingsStore);
+  return <TooltipImpl {...props} tooltipsEnabled={settings.tooltipsEnabled} />;
+}
+
+// 列表行会显式下发 tooltipsEnabled，避免每个 Tooltip 各自订阅 settingsStore；
+// 未下发时（其他零散位置）保持原有全局订阅行为。
+export default function Tooltip(props) {
+  if (typeof props.tooltipsEnabled === 'boolean') {
+    return <TooltipImpl {...props} />;
+  }
+  return <TooltipWithSettings {...props} />;
 }
 

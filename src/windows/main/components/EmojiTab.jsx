@@ -146,7 +146,7 @@ const PreviewTooltipCard = ({ char, title, subtitle, codeLabel, sizeClass = 'tex
   return (
     <div className="flex items-center gap-3 px-1 py-0.5">
       <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-qc-active ring-1 ring-qc-border">
-        <span className={`${sizeClass} leading-none ${glyphClassName || ''}`}>{char}</span>
+        <span className={sizeClass + ' leading-none ' + (glyphClassName || '')}>{char}</span>
       </div>
       <div className="min-w-0">
         <div className="max-w-[220px] text-[15px] font-semibold leading-snug text-qc-fg break-words">
@@ -180,6 +180,7 @@ const ImageGroupSidebarButton = ({
         <button
           type="button"
           onClick={() => onSelect(group.name)}
+          aria-label={group.name}
           className={`w-full h-full flex items-center justify-center rounded-lg transition-colors ${
             isActive
               ? 'bg-blue-100 text-blue-600'
@@ -200,6 +201,7 @@ const ImageGroupSidebarButton = ({
       <button
         type="button"
         onClick={(e) => onEdit(e, group)}
+        aria-label={t('groups.edit')}
         className="absolute -right-0.5 -top-0.5 w-3.5 h-3.5 rounded-full bg-qc-panel border border-qc-border text-qc-fg-muted hover:text-blue-600 hover:border-blue-400 opacity-0 hover:opacity-100 group-hover:opacity-100 flex items-center justify-center"
         title={t('groups.edit')}
       >
@@ -310,18 +312,31 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
   }, [showImages, loadImageGroups]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      ensureEmojiData();
-      emojiMetaRef.current = getEmojiMetaCache() || {};
-      setIsReady(true);
+    let disposed = false;
+    // 语言切换时重新按需加载对应语言的 emoji 数据（另一份不会被加载）。
+    setIsReady(false);
+
+    const timer = setTimeout(async () => {
+      try {
+        await ensureEmojiData(settings.language);
+        if (disposed) return;
+        emojiMetaRef.current = getEmojiMetaCache() || {};
+        setIsReady(true);
+      } catch (error) {
+        if (!disposed) {
+          console.error('加载 emoji 数据失败:', error);
+        }
+      }
     }, 300);
+
     return () => {
+      disposed = true;
       clearTimeout(timer);
       if (imagePluginDragClearTimerRef.current) {
         window.clearTimeout(imagePluginDragClearTimerRef.current);
       }
     };
-  }, []);
+  }, [settings.language]);
 
   useLayoutEffect(() => {
     if (showImages) return undefined;
@@ -466,7 +481,7 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
       addToRecent(char, name, nameCn);
     } catch (e) {
       console.error('粘贴失败:', e);
-      toast.error(t('common.error'), EMOJI_TOAST_CONFIG);
+      toast.error(t('common.pasteFailed', '粘贴失败'), EMOJI_TOAST_CONFIG);
     }
   }, [addToRecent, t, applySkintone, updateSkinToneFromEmoji]);
 
@@ -711,6 +726,7 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
                 >
                   <button
                     onClick={() => handlePaste(item, section.catId)}
+                    aria-label={name || baseChar}
                     className={`aspect-square w-full flex items-center justify-center text-2xl leading-none text-qc-fg rounded cursor-pointer transition-[transform,box-shadow,background-color,border-color] ${uiAnimationEnabled ? 'active:scale-95 hover:bg-qc-panel hover:shadow-lg hover:border hover:border-qc-border' : 'hover:bg-qc-hover'}`}
                     style={uiAnimationEnabled ? {
                       opacity: 0,
@@ -718,7 +734,7 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
                     } : {}}
                   >
                     <span
-                      className={`inline-flex items-center justify-center w-[1.2em] h-[1.2em] overflow-hidden ${emojiGlyphClassName}`}
+                      className={'inline-flex items-center justify-center w-[1.2em] h-[1.2em] overflow-hidden ' + emojiGlyphClassName}
                     >
                       {displayChar}
                     </span>
@@ -726,9 +742,10 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
                 </Tooltip>
                 {/* 肤色选择按钮 */}
                 {skinVariants && (
-                  <Tooltip content="选择肤色" placement="left" asChild>
+                  <Tooltip content={t('emoji.selectSkinTone', '选择肤色')} placement="left" asChild>
                     <button
                       onClick={(e) => handleSkinPickerOpen(e, baseChar, skinVariants, item, section.catId)}
+                      aria-label={`${t('emoji.selectSkinTone', '选择肤色')}: ${name || baseChar}`}
                       className={`absolute top-0.5 right-0.5 z-10 w-3 h-3 rounded-full bg-gradient-to-br from-amber-200 via-amber-400 to-amber-700 border border-white opacity-0 group-hover:opacity-100 shadow-sm ${uiAnimationEnabled ? 'transition-opacity hover:scale-125' : ''}`}
                     />
                   </Tooltip>
@@ -925,6 +942,7 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
               <button
                 type="button"
                 onClick={handleAddImageGroup}
+                aria-label={t('groups.add')}
                 className="w-8 h-8 mx-auto mt-auto flex items-center justify-center rounded-lg transition-colors text-qc-fg-muted hover:bg-qc-hover hover:text-blue-600"
               >
                 <i className="ti ti-plus text-base"></i>
@@ -936,13 +954,14 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
             <button
               ref={el => sidebarButtonsRef.current[cat.id] = el}
               onClick={() => handleCategoryClick(cat.id)}
+              aria-label={t(cat.labelKey)}
               className={`w-8 h-8 mx-auto mb-0.5 flex items-center justify-center rounded-lg transition-colors ${
                 idx === 0
                   ? 'bg-blue-100 text-blue-600'
                   : 'text-qc-fg-muted hover:bg-qc-hover'
               }`}
             >
-              <i className={`ti ${cat.icon} text-base`}></i>
+              <i className={'ti ' + cat.icon + ' text-base'}></i>
             </button>
           </Tooltip>
         ))}
@@ -1037,6 +1056,7 @@ function EmojiTab({ emojiMode, onEmojiModeChange }) {
                       handlePaste(skinPickerEmoji.item, skinPickerEmoji.catId, variant, skinPickerEmoji.baseChar);
                       setSkinPickerEmoji(null);
                     }}
+                    aria-label={`${t('emoji.selectSkinTone', '选择肤色')}: ${SKIN_TONES[i]?.label || ''}`}
                     className={`w-8 h-8 flex items-center justify-center text-xl rounded-lg transition-all hover:scale-110 ${
                       isCurrent
                         ? 'bg-blue-100 ring-2 ring-blue-500'

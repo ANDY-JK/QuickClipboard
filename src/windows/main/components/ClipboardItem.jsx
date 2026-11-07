@@ -1,9 +1,9 @@
 import { memo, useEffect, useCallback, useMemo, useRef, useState } from 'react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { emit } from '@tauri-apps/api/event';
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { pasteClipboardItem, clipboardStore, refreshClipboardHistory } from '@shared/store/clipboardStore';
-import { ROW_HEIGHT_CONFIG, useItemCommon } from '@shared/hooks/useItemCommon.jsx';
+import { ROW_HEIGHT_CONFIG, getItemCommon } from '@shared/hooks/useItemCommon.jsx';
 import { useSortable, CSS } from '@shared/hooks/useSortable';
 import { showClipboardItemContextMenu } from '@shared/utils/contextMenu';
 import { getExternalDragInfo } from '@shared/utils/externalDragInfo';
@@ -14,12 +14,15 @@ import { favoritesStore } from '@shared/store/favoritesStore';
 import { openEditorForClipboard } from '@shared/api/textEditor';
 import { toast, TOAST_SIZES, TOAST_POSITIONS } from '@shared/store/toastStore';
 import { moveClipboardItemToTop } from '@shared/api';
-import { useTheme } from '@shared/hooks/useTheme';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
+import ExtensionBadge from '@/extensions/ui/ExtensionBadge.jsx';
 import { getClipboardItemPasteOptions } from '@shared/api/clipboard';
 import { extractFormatKinds, formatKindsToLabels } from '@shared/utils/pasteFormatHints';
 import { settingsStore } from '@shared/store/settingsStore';
 import { getOneTimePasteEnabled } from '@shared/services/oneTimePaste';
+import { hasMissingFile } from '@shared/utils/filesContent';
+import { getDataDirectory } from '@shared/utils/dataDirectory';
+import { createLruCache } from '@shared/utils/lruCache';
 import {
   DISPLAY_FORMAT_HTML,
   DISPLAY_FORMAT_IMAGE,
@@ -34,7 +37,7 @@ import {
 import logoIcon from '@/assets/icon1024.png';
 
 const PREVIEW_HOVER_DELAY_MS = 120;
-const clipboardFormatKindsCache = new Map();
+const clipboardFormatKindsCache = createLruCache({ maxEntries: 500 });
 
 const getItemPreviewMode = (item, type, displayPriorityOrder) => {
   const primaryType = getPrimaryType(type || item?.content_type);
@@ -56,6 +59,11 @@ function ClipboardItem({
   index,
   onClick,
   sortId,
+  settings,
+  searchKeyword = '',
+  activeFilterType = 'all',
+  isBackground = false,
+  tooltipsEnabled = true,
   isSelected = false,
   isMultiSelected = false,
   selectionNumber,
@@ -74,14 +82,12 @@ function ClipboardItem({
   } = useTranslation();
   const isPasted = item.paste_count > 0;
   const {
-    settings,
     getHeightClass,
     getLineClampClass,
     renderType,
     formatTime,
     renderContent
-  } = useItemCommon(item);
-  const { isBackground } = useTheme();
+  } = getItemCommon(item, settings, { searchKeyword, activeFilterType });
   const isFileType = renderType === 'file';
   const isImageType = renderType === 'image';
   const isImageOrFileType = isFileType || isImageType;
@@ -110,7 +116,7 @@ function ClipboardItem({
   useEffect(() => {
     if (item.source_icon_hash) {
       setIconLoadFailed(false);
-      invoke('get_data_directory').then(dataDir => {
+      getDataDirectory().then(dataDir => {
         const iconPath = `${dataDir}/app_icons/${item.source_icon_hash}.png`;
         setSourceIconUrl(convertFileSrc(iconPath, 'asset'));
       }).catch(() => {
@@ -122,16 +128,9 @@ function ClipboardItem({
     }
   }, [item.source_icon_hash]);
 
-  const hasFileMissing = (() => {
-    if (!isFileType && !isImageType) return false;
-    if (!item.content?.startsWith('files:')) return false;
-    try {
-      const filesData = JSON.parse(item.content.substring(6));
-      return filesData.files?.some(f => f.exists === false) || false;
-    } catch {
-      return false;
-    }
-  })();
+  const hasFileMissing = (isFileType || isImageType)
+    ? hasMissingFile(item.content, `missing:${item.id}`)
+    : false;
 
   // 外部拖拽信息：列表拖至窗口边缘时由父组件切换为系统拖拽。
   const externalDragInfo = getExternalDragInfo(item, renderType, t, logoIcon, 'clipboard');
@@ -259,7 +258,7 @@ function ClipboardItem({
         try {
           await moveClipboardItemToTop(item.id);
         } finally {
-          clipboardStore.items = {};
+          clipboardStore.moveLoadedItemToTop(item.id);
         }
       }
     } catch (error) {
@@ -324,7 +323,7 @@ function ClipboardItem({
     }
     ensureFormatKindsLoaded();
     if (onHover) {
-      onHover();
+      onHover(index);
     }
 
     // 预览窗口：延迟触发，避免鼠标快速掠过时频繁创建窗口
@@ -512,18 +511,17 @@ function ClipboardItem({
 
   // 键盘选中样式
   const isActiveSelected = isMultiSelectMode ? isMultiSelected : isSelected;
-  const baseSurfaceClasses = isBackground ? 'bg-qc-panel' : 'bg-transparent';
-  const gaplessDividerClasses = 'border-b border-transparent';
+  // 选中/默认状态：完整字面量分支，避免运行时拼接
   const selectedClasses = isCardStyle
     ? (
       isActiveSelected
-        ? `${baseSurfaceClasses} ring-2 ring-blue-500 ring-inset`
-        : `${baseSurfaceClasses} ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5`
+        ? (isBackground ? 'bg-qc-panel ring-2 ring-blue-500 ring-inset' : 'bg-transparent ring-2 ring-blue-500 ring-inset')
+        : (isBackground ? 'bg-qc-panel ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5' : 'bg-transparent ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5')
     )
     : (
       isActiveSelected
-        ? `${baseSurfaceClasses} ${gaplessDividerClasses} ring-2 ring-blue-500 ring-inset`
-        : `${baseSurfaceClasses} border-b border-qc-border`
+        ? (isBackground ? 'bg-qc-panel border-b border-transparent ring-2 ring-blue-500 ring-inset' : 'bg-transparent border-b border-transparent ring-2 ring-blue-500 ring-inset')
+        : (isBackground ? 'bg-qc-panel border-b border-qc-border' : 'bg-transparent border-b border-qc-border')
     );
   const smallElementClasses = `
     flex items-center justify-center
@@ -619,7 +617,15 @@ function ClipboardItem({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onWheel={handlePreviewWheel}
-      className={`clipboard-item group relative flex flex-col ${isMultiSelectMode ? 'pl-9 pr-2.5' : 'px-2.5'} py-2 ${selectedClasses} ${isCardStyle ? 'rounded-md' : ''} ${isDraggable ? 'cursor-move' : 'cursor-pointer'} transition-all ${settings.uiAnimationEnabled !== false ? 'hover:translate-y-[-3px]' : 'no-animation'} ${getHeightClass()}`}
+      className={
+        'clipboard-item group relative flex flex-col ' +
+        (isMultiSelectMode ? 'pl-9 pr-2.5' : 'px-2.5') + ' py-2 ' +
+        selectedClasses + ' ' +
+        (isCardStyle ? 'rounded-md' : '') + ' ' +
+        (isDraggable ? 'cursor-move' : 'cursor-pointer') + ' transition-all ' +
+        (settings.uiAnimationEnabled !== false ? 'hover:translate-y-[-3px]' : 'no-animation') + ' ' +
+        getHeightClass()
+      }
     >
       {isMultiSelectMode && (
         <div className="absolute left-2 top-1/2 -translate-y-1/2 z-20 pointer-events-none">
@@ -633,7 +639,7 @@ function ClipboardItem({
         </div>
       )}
       {settings.showBadges !== false && (hasFileMissing || item.is_pinned || isPasted) && (
-        <Tooltip content={hasFileMissing ? t('clipboard.fileNotFound', '文件不存在') : item.is_pinned ? t('contextMenu.pinned') : t('common.pasted')} placement="right" asChild>
+        <Tooltip content={hasFileMissing ? t('clipboard.fileNotFound', '文件不存在') : item.is_pinned ? t('contextMenu.pinned') : t('common.pasted')} placement="right" asChild tooltipsEnabled={tooltipsEnabled}>
           <div
             className={`absolute top-0 left-0 z-30 overflow-hidden ${isCardStyle ? 'rounded-tl-md' : ''}`}
             style={{ width: 20, height: 20 }}
@@ -663,13 +669,15 @@ function ClipboardItem({
           </div>
         </Tooltip>
       )}
+      {/* 扩展识别结果：绝对定位，不参与布局 */}
+      <ExtensionBadge itemId={item.id} tooltipsEnabled={tooltipsEnabled} />
       {/* 顶部操作区域：操作按钮、快捷键、序号 */}
       <div className={floatingControlsClasses}>
         {/* 悬停操作按钮组 */}
         {!isMultiSelectMode && <div className={actionGroupClasses} onMouseEnter={closeHoverPreview} onMouseLeave={handleActionGroupMouseLeave}>
-          <Tooltip content={item.favorite_id ? t('favorites.remove') : t('contextMenu.addToFavorites')} placement="bottom">
+          <Tooltip content={item.favorite_id ? t('favorites.remove') : t('contextMenu.addToFavorites')} placement="bottom" tooltipsEnabled={tooltipsEnabled}>
             <button
-              className={`${actionButtonClasses} ${item.favorite_id ? 'text-qc-favorite hover:text-qc-favorite bg-qc-active' : ''}`}
+              className={actionButtonClasses + ' ' + (item.favorite_id ? 'text-qc-favorite hover:text-qc-favorite bg-qc-active' : '')}
               onClick={handleFavoriteClick}
               aria-pressed={Boolean(item.favorite_id)}
             >
@@ -677,20 +685,20 @@ function ClipboardItem({
             </button>
           </Tooltip>
           {(renderType === 'text' || renderType === 'rich_text') && (
-            <Tooltip content={t('common.edit')} placement="bottom">
+            <Tooltip content={t('common.edit')} placement="bottom" tooltipsEnabled={tooltipsEnabled}>
               <button className={actionButtonClasses} onClick={handleEditClick}>
                 <i className="ti ti-edit" style={{ fontSize: 12 }}></i>
               </button>
             </Tooltip>
           )}
-          <Tooltip content={t('common.delete')} placement="bottom">
+          <Tooltip content={t('common.delete')} placement="bottom" tooltipsEnabled={tooltipsEnabled}>
             <button className={actionButtonClasses} onClick={handleDeleteClick}>
               <i className="ti ti-trash" style={{ fontSize: 12 }}></i>
             </button>
           </Tooltip>
-          <Tooltip content={item.is_pinned ? t('contextMenu.unpin') : t('contextMenu.pin')} placement="bottom">
+          <Tooltip content={item.is_pinned ? t('contextMenu.unpin') : t('contextMenu.pin')} placement="bottom" tooltipsEnabled={tooltipsEnabled}>
             <button
-              className={`${actionButtonClasses} ${item.is_pinned ? 'text-theme-9 bg-qc-active' : ''}`}
+              className={actionButtonClasses + ' ' + (item.is_pinned ? 'text-theme-9 bg-qc-active' : '')}
               onClick={handlePinClick}
             >
               <i className={item.is_pinned ? 'ti ti-pinned-filled' : 'ti ti-pin'} style={{ fontSize: 12 }}></i>
@@ -699,13 +707,13 @@ function ClipboardItem({
         </div>}
         {/* 快捷键 */}
         {showShortcut && getShortcut() && (
-          <span className={`${shortcutClasses} pointer-events-none`}>
+          <span className={shortcutClasses + ' pointer-events-none'}>
             {getShortcut()}
           </span>
         )}
         {/* 来源图标 */}
         {settings.showSourceIcon !== false && !iconLoadFailed && sourceIconUrl && (
-          <Tooltip content={sourceTitle} placement="bottom" asChild>
+          <Tooltip content={sourceTitle} placement="bottom" asChild tooltipsEnabled={tooltipsEnabled}>
             <span className={iconBadgeClasses}>
               <img
                 src={sourceIconUrl}
@@ -717,7 +725,7 @@ function ClipboardItem({
           </Tooltip>
         )}
         {/* 序号 */}
-        {showIndex && <span className={`${numberBadgeClasses} pointer-events-none`}>
+        {showIndex && <span className={numberBadgeClasses + ' pointer-events-none'}>
           {index + 1}
         </span>}
       </div>
@@ -768,7 +776,7 @@ function ClipboardItem({
 
   if (shouldShowFormatHintTooltip) {
     return (
-      <Tooltip content={formatHintTooltipContent} placement="top" asChild>
+      <Tooltip content={formatHintTooltipContent} placement="top" asChild tooltipsEnabled={tooltipsEnabled}>
         {itemNode}
       </Tooltip>
     );
@@ -781,10 +789,17 @@ function areClipboardItemPropsEqual(prevProps, nextProps) {
   return prevProps.item === nextProps.item
     && prevProps.index === nextProps.index
     && prevProps.sortId === nextProps.sortId
+    && prevProps.settings === nextProps.settings
+    && prevProps.searchKeyword === nextProps.searchKeyword
+    && prevProps.activeFilterType === nextProps.activeFilterType
+    && prevProps.isBackground === nextProps.isBackground
+    && prevProps.tooltipsEnabled === nextProps.tooltipsEnabled
     && prevProps.isSelected === nextProps.isSelected
     && prevProps.isMultiSelected === nextProps.isMultiSelected
     && prevProps.selectionNumber === nextProps.selectionNumber
     && prevProps.isMultiSelectMode === nextProps.isMultiSelectMode
+    && prevProps.onHover === nextProps.onHover
+    && prevProps.onClick === nextProps.onClick
     && prevProps.isDragActive === nextProps.isDragActive
     && prevProps.isDraggable === nextProps.isDraggable
     && prevProps.showShortcut === nextProps.showShortcut

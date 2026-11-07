@@ -124,8 +124,8 @@ function MarqueeText({ text, className = '', title, textClassName = '' }) {
 
   if (!shouldMarquee) {
     return (
-      <span ref={outerRef} className={`block min-w-0 ${className}`} title={title || text}>
-        <span className={`block truncate ${textClassName}`} ref={contentRef}>
+      <span ref={outerRef} className={'block min-w-0 ' + className} title={title || text}>
+        <span className={'block truncate ' + textClassName} ref={contentRef}>
           {text}
         </span>
       </span>
@@ -133,10 +133,10 @@ function MarqueeText({ text, className = '', title, textClassName = '' }) {
   }
 
   return (
-    <span ref={outerRef} className={`qc-file-marquee block min-w-0 overflow-hidden ${className}`} title={title || text}>
+    <span ref={outerRef} className={'qc-file-marquee block min-w-0 overflow-hidden ' + className} title={title || text}>
       <span ref={contentRef} className="inline-flex w-max items-center whitespace-nowrap">
         <span className={textClassName}>{text}</span>
-        <span aria-hidden="true" className={`ml-8 ${textClassName}`}>
+        <span aria-hidden="true" className={'ml-8 ' + textClassName}>
           {text}
         </span>
       </span>
@@ -306,7 +306,7 @@ const FilePreview = forwardRef(function FilePreview(
   const defaultItemHeight = 58;
 
   return (
-    <div className="preview-file-content flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <style>{`
         @keyframes qc-preview-file-marquee {
           0% {
@@ -367,18 +367,14 @@ const FilePreview = forwardRef(function FilePreview(
               : formatFileSize(Number(file?.size) || 0);
             const nameTextClass = file?.exists === false ? 'text-qc-fg-muted line-through' : 'text-qc-fg';
             const pathTextClass = file?.exists === false ? 'text-qc-fg-muted' : 'text-qc-fg-subtle';
-            const rowStateClass = file?.exists === false
-              ? 'border-qc-border/70 bg-qc-active/20'
-              : 'border-transparent bg-transparent hover:border-qc-border/70 hover:bg-qc-hover/55';
-            const iconStateClass = file?.exists === false ? 'opacity-65' : '';
 
             return (
               <div className="w-full pb-1" style={{ minWidth: `${FILE_ROW_MIN_WIDTH}px` }}>
                 <div
-                  className={`preview-file-row flex min-h-[54px] items-center gap-2 rounded-md border px-2 py-1.5 transition-colors ${rowStateClass}`}
+                  className={`preview-file-row flex min-h-[54px] items-center gap-2 rounded-md border px-2 py-1.5 transition-colors ${file?.exists === false ? 'border-qc-border/70 bg-qc-active/20' : 'border-transparent bg-transparent hover:border-qc-border/70 hover:bg-qc-hover/55'}`}
                 >
                   <span
-                    className={`preview-file-icon-shell flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-qc-border/70 bg-qc-surface/80 text-qc-fg-subtle ${iconStateClass}`}
+                    className={`preview-file-icon-shell flex h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded border border-qc-border/70 bg-qc-surface/80 text-qc-fg-subtle ${file?.exists === false ? 'opacity-65' : ''}`}
                   >
                     <FileIcon file={file} size={FILE_ICON_SIZE} />
                   </span>

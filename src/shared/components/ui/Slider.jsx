@@ -39,7 +39,7 @@ function Slider({
     }
   };
   
-  return <div className={`flex items-center justify-end gap-2 ${className}`}>
+  return <div className={'flex items-center justify-end gap-2 ' + className}>
       <input 
         type="range" 
         min={min} 

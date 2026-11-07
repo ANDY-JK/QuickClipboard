@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 function Button({
   children,
   variant = 'primary',
@@ -22,7 +22,7 @@ function Button({
     danger: 'bg-red-500 hover:bg-red-600 text-white'
   };
   const isDisabled = disabled || loading;
-  return <button onClick={onClick} disabled={isDisabled} className={`${baseClasses} ${variantClasses[variant]} ${className}`} {...props}>
+  return <button onClick={onClick} disabled={isDisabled} className={baseClasses + ' ' + variantClasses[variant] + ' ' + className} {...props}>
       {loading ? <i className="ti ti-loader-2 h-4 w-4 animate-spin text-current"></i> : icon ? <span>{icon}</span> : null}
       {children}
     </button>;

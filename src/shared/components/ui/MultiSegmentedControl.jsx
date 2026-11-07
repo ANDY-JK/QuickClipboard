@@ -43,7 +43,7 @@ function MultiSegmentedControl({
   }
 
   return (
-    <div className={`${containerClass} ${className}`} style={containerStyle}>
+    <div className={containerClass + ' ' + className} style={containerStyle}>
       {options.map(option => {
         const isActive = activeValues.includes(option.value)
 

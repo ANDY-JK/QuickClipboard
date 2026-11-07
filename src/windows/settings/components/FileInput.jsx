@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 import Tooltip from '@shared/components/common/Tooltip.jsx';

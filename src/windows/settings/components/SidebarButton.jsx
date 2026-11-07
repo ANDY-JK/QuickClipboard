@@ -54,7 +54,7 @@ function SidebarButton({
       transitionDuration: '200ms, 200ms, 500ms, 500ms'
     } : {}}>
         <i className={`
-    ${Icon}
+    ` + Icon + `
     ${uiAnimationEnabled ? 'transition-transform duration-200' : ''}
     ${isActive ? (uiAnimationEnabled ? 'scale-110' : '') : (uiAnimationEnabled ? 'group-hover:scale-110 group-hover:rotate-3' : '')}
   `} style={{

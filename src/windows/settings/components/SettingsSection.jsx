@@ -5,7 +5,7 @@ function SettingsSection({
   children,
   className = ''
 }) {
-  return <div className={`settings-section mb-6 ${className}`}>
+  return <div className={'mb-6 ' + className}>
     <div className="settings-section-header inline-flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-3 bg-qc-panel border border-qc-border border-b-0 rounded-t-xl -mb-px">
       <h2 className="text-lg font-semibold text-qc-fg">
         {title}

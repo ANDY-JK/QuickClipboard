@@ -370,7 +370,7 @@ function QuickPasteWindow() {
             <div className="px-6 py-4 bg-qc-surface/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-qc-border">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 flex items-center justify-center bg-qc-panel rounded-xl">
-                  <i className={`ti ti-${isClipboardTab ? 'clipboard-off' : 'star-off'} text-qc-fg-subtle text-lg`} />
+                  <i className={`ti ${isClipboardTab ? 'ti-clipboard-off' : 'ti-star-off'} text-qc-fg-subtle text-lg`} />
                 </div>
                 <span className="text-sm text-qc-fg-muted font-medium">
                   {isClipboardTab ? t('settings.quickpaste.window.emptyClipboard') : t('settings.quickpaste.window.emptyFavorites')}

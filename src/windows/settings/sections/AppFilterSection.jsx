@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -115,7 +115,7 @@ function IconTransferButton({
         disabled={disabled || loading}
         className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-qc-border bg-qc-panel-2 text-qc-fg transition-colors hover:bg-qc-hover disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <i className={`${icon} text-lg ${loading ? 'animate-spin' : ''}`}></i>
+        <i className={icon + ' text-lg ' + (loading ? 'animate-spin' : '')}></i>
       </button>
     </Tooltip>
   );
@@ -148,7 +148,7 @@ function AppListItem({
     : undefined;
 
   return (
-    <div className={`app-filter-list-item ${listItemClass}`} style={selectedRowStyle}>
+    <div className={'app-filter-list-item ' + listItemClass} style={selectedRowStyle}>
       <button
         type="button"
         aria-label={selectLabel}
@@ -169,7 +169,7 @@ function AppListItem({
         className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded text-qc-fg-muted transition-colors hover:bg-qc-hover hover:text-[var(--qc-accent)]"
         aria-label={actionLabel}
       >
-        <i className={`${actionIcon} w-4 h-4`}></i>
+        <i className={actionIcon + ' w-4 h-4'}></i>
       </button>
     </div>
   );

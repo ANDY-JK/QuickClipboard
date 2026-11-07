@@ -289,7 +289,7 @@ function ImageTile({
         role="button"
         className={`relative group aspect-square rounded-lg bg-qc-panel-2 flex items-center justify-center cursor-pointer transition-all overflow-hidden ${
           isDragging
-            ? 'opacity-45 scale-95 saturate-50 ring-2 ring-dashed ring-blue-400 bg-qc-active'
+            ? 'opacity-45 scale-95 saturate-50 ring-2 ring-blue-400 bg-qc-active'
             : isSelected
               ? 'bg-qc-active ring-2 ring-blue-500 shadow-sm'
               : 'hover:bg-qc-hover hover:ring-2 hover:ring-blue-400'

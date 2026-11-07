@@ -99,7 +99,7 @@ function HtmlContent({
       }
     : undefined;
 
-  return <div ref={contentRef} className={`text-sm text-qc-fg leading-relaxed html-content overflow-hidden scrollbar-thin scrollbar-thumb-qc-border-strong scrollbar-track-transparent ${clampClass}`} style={{
+  return <div ref={contentRef} className={'text-sm text-qc-fg leading-relaxed html-content overflow-hidden ' + clampClass} style={{
     ...autoClampStyle,
     wordBreak: 'break-all',
     maxHeight: rowHeight === 'auto' && Number.isFinite(Number(maxContentHeightPx)) ? `${Number(maxContentHeightPx)}px` : '100%',

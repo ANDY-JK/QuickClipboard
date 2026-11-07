@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useEffect, useRef, useState } from 'react';
 
 function PresetInput({
@@ -110,7 +110,7 @@ function PresetInput({
   const menuPositionClass = menuDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1';
 
   return (
-    <div ref={rootRef} className={`relative inline-flex ${className}`}>
+    <div ref={rootRef} className={'relative inline-flex ' + className}>
       <div className="flex h-10 w-full items-center rounded-lg border border-qc-border bg-qc-panel text-qc-fg transition-shadow focus-within:ring-2 focus-within:ring-blue-500">
         <input
           value={draftValue}
@@ -120,7 +120,7 @@ function PresetInput({
           type={inputType}
           inputMode={inputMode}
           pattern={pattern}
-          className={`min-w-0 flex-1 rounded-l-lg bg-transparent px-3 py-2 text-sm text-qc-fg placeholder:text-qc-fg-subtle focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ${inputClassName}`}
+          className={'min-w-0 flex-1 rounded-l-lg bg-transparent px-3 py-2 text-sm text-qc-fg placeholder:text-qc-fg-subtle focus:outline-none disabled:cursor-not-allowed disabled:opacity-60 ' + inputClassName}
           onChange={handleInputChange}
           onBlur={(event) => {
             commitValue();
@@ -141,7 +141,7 @@ function PresetInput({
       </div>
 
       {open && (
-        <div className={`absolute right-0 ${menuPositionClass} z-50 max-h-64 min-w-full overflow-y-auto rounded-lg border border-qc-border bg-qc-panel py-1 shadow-lg ${menuClassName}`}>
+        <div className={'absolute right-0 ' + menuPositionClass + ' z-50 max-h-64 min-w-full overflow-y-auto rounded-lg border border-qc-border bg-qc-panel py-1 shadow-lg ' + menuClassName}>
           {options.map(option => (
             <button
               key={option.value}

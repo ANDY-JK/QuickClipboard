@@ -1,4 +1,4 @@
-import "@tabler/icons-webfont/dist/tabler-icons.min.css";
+import "@shared/styles/tabler-icons-subset.css";
 import { useTranslation } from "react-i18next";
 import { useSnapshot } from "valtio";
 import Tooltip from "@shared/components/common/Tooltip.jsx";

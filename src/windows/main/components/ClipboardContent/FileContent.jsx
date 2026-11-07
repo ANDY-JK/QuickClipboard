@@ -4,6 +4,7 @@ import { settingsStore } from '@shared/store/settingsStore';
 import { useTranslation } from 'react-i18next';
 import { highlightText } from '@shared/utils/highlightText';
 import { formatFileSize } from '@shared/utils/format';
+import { parseFilesContent } from '@shared/utils/filesContent';
 
 const IMAGE_FILE_EXTENSIONS = ['PNG', 'JPG', 'JPEG', 'GIF', 'BMP', 'WEBP', 'ICO', 'SVG'];
 
@@ -43,12 +44,14 @@ function FileIcon({
 
 function FileContent({
   item,
+  settings: settingsProp,
   compact = false,
   searchKeyword,
   maxContentHeightPx
 }) {
   const { t } = useTranslation();
-  const settings = useSnapshot(settingsStore);
+  const settingsSnapshot = useSnapshot(settingsStore);
+  const settings = settingsProp ?? settingsSnapshot;
   const isAutoHeight = settings.rowHeight === 'auto';
   const isXSmallHeight = settings.rowHeight === 'xsmall';
   const autoMaxHeight = Number.isFinite(Number(maxContentHeightPx))
@@ -66,14 +69,10 @@ function FileContent({
     return searchKeyword ? highlightText(path, searchKeyword) : path;
   };
 
-  let filesData = null;
-  try {
-    if (item.content?.startsWith('files:')) {
-      const filesJson = item.content.substring(6);
-      filesData = JSON.parse(filesJson);
-    }
-  } catch (error) {
-    console.error('解析文件数据失败:', error);
+  const isFilesContent = item.content?.startsWith('files:');
+  const filesData = isFilesContent ? parseFilesContent(item.content, item.id) : null;
+
+  if (isFilesContent && !filesData) {
     return <div className="text-sm text-red-500">
       文件数据解析错误
     </div>;

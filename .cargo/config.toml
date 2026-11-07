@@ -1,0 +1,6 @@
+# fltk-sys 在启用 fltk-bundled 时默认会从 GitHub 下载预编译库，
+# 网络不通（或 CI 无外网）会导致 build script panic，构建不可复现。
+# 这里把 CFLTK_BUNDLE_DIR 固定指向仓库内的固化副本，构建全程零下载。
+# relative = true 表示该路径相对于仓库根目录（即 .cargo 目录的上一级）。
+[env]
+CFLTK_BUNDLE_DIR = { value = "src-tauri/vendor/fltk-bundle/lib", relative = true }

@@ -1,11 +1,9 @@
 import { memo, useEffect, useCallback, useMemo, useRef, useState } from 'react';
 import { emit } from '@tauri-apps/api/event';
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { pasteFavorite, refreshFavorites } from '@shared/store/favoritesStore';
 import { ROW_HEIGHT_CONFIG, useItemCommon } from '@shared/hooks/useItemCommon.jsx';
 import { useSortable, CSS } from '@shared/hooks/useSortable';
-import { useSnapshot } from 'valtio';
-import { groupsStore } from '@shared/store/groupsStore';
 import { showFavoriteItemContextMenu } from '@shared/utils/contextMenu';
 import { getExternalDragInfo } from '@shared/utils/externalDragInfo';
 import { getPrimaryType } from '@shared/utils/contentType';
@@ -32,9 +30,16 @@ import {
 } from '@shared/utils/pasteFormatHints';
 import SimpleInputDialog from './SimpleInputDialog';
 import logoIcon from '@/assets/icon1024.png';
+import { createLruCache } from '@shared/utils/lruCache';
 
 const PREVIEW_HOVER_DELAY_MS = 120;
-const favoriteFormatKindsCache = new Map();
+const favoriteFormatKindsCache = createLruCache({ maxEntries: 500 });
+
+// 分组标签样式：完整字面量常量表，避免运行时拼接
+const GROUP_BADGE_CLASSES = {
+  colored: 'flex items-center justify-center h-5 px-1.5 text-xs font-medium border rounded-md transition-all backdrop-blur-md text-white border-white/20 shadow-sm',
+  plain: 'flex items-center justify-center h-5 px-1.5 text-xs font-medium border rounded-md transition-all backdrop-blur-md text-qc-fg-muted border-qc-border bg-qc-panel/80',
+};
 
 const getItemPreviewMode = (item, type, displayPriorityOrder) => {
   const primaryType = getPrimaryType(type || item?.content_type);
@@ -65,7 +70,9 @@ function FavoriteItem({
   isDragActive = false,
   showIndex = true,
   animationDelay = 0,
-  onPrepareExternalDrag
+  onPrepareExternalDrag,
+  groupColorMap,
+  currentGroup = '全部'
 }) {
   const {
     t
@@ -205,15 +212,9 @@ function FavoriteItem({
       });
   }, [settings.textPreview, item]);
 
-  const groups = useSnapshot(groupsStore);
-  const showGroupBadge = groups.currentGroup === '全部' && item.group_name && item.group_name !== '全部';
-
-  const getGroupColor = (groupName) => {
-    const group = groups.groups.find(g => g.name === groupName);
-    return group?.color || '#dc2626';
-  };
-
-  const groupColor = showGroupBadge ? getGroupColor(item.group_name) : null;
+  // 分组颜色由父级一次性构建的 Map 提供，避免每行都订阅 groupsStore 并线性查找。
+  const showGroupBadge = currentGroup === '全部' && item.group_name && item.group_name !== '全部';
+  const groupColor = showGroupBadge ? (groupColorMap?.get(item.group_name) || '#dc2626') : null;
 
   // 拖拽功能
   const {
@@ -412,18 +413,17 @@ function FavoriteItem({
 
   // 键盘选中样式
   const isActiveSelected = isMultiSelectMode ? isMultiSelected : isSelected;
-  const baseSurfaceClasses = isBackground ? 'bg-qc-panel' : 'bg-transparent';
-  const gaplessDividerClasses = 'border-b border-transparent';
+  // 选中/默认状态：完整字面量分支，避免运行时拼接
   const selectedClasses = isCardStyle
     ? (
       isActiveSelected
-        ? `${baseSurfaceClasses} ring-2 ring-blue-500 ring-inset`
-        : `${baseSurfaceClasses} ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5`
+        ? (isBackground ? 'bg-qc-panel ring-2 ring-blue-500 ring-inset' : 'bg-transparent ring-2 ring-blue-500 ring-inset')
+        : (isBackground ? 'bg-qc-panel ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5' : 'bg-transparent ring-1 ring-qc-border ring-inset shadow-sm shadow-black/5')
     )
     : (
       isActiveSelected
-        ? `${baseSurfaceClasses} ${gaplessDividerClasses} ring-2 ring-blue-500 ring-inset`
-        : `${baseSurfaceClasses} border-b border-qc-border`
+        ? (isBackground ? 'bg-qc-panel border-b border-transparent ring-2 ring-blue-500 ring-inset' : 'bg-transparent border-b border-transparent ring-2 ring-blue-500 ring-inset')
+        : (isBackground ? 'bg-qc-panel border-b border-qc-border' : 'bg-transparent border-b border-qc-border')
     );
   const smallElementClasses = `
     flex items-center justify-center
@@ -473,15 +473,7 @@ function FavoriteItem({
   `.trim().replace(/\s+/g, ' ');
 
   // 分组标签样式
-  const groupBadgeClasses = (color) => `
-    flex items-center justify-center
-    h-5 px-1.5
-    text-xs font-medium
-    border rounded-md
-    transition-all
-    backdrop-blur-md
-    ${color ? 'text-white border-white/20 shadow-sm' : 'text-qc-fg-muted border-qc-border bg-qc-panel/80'}
-  `.trim().replace(/\s+/g, ' ');
+  const groupBadgeClasses = groupColor ? GROUP_BADGE_CLASSES.colored : GROUP_BADGE_CLASSES.plain;
   const isCompactHeight = settings.rowHeight === 'small' || settings.rowHeight === 'xsmall';
   const isXSmallHeight = settings.rowHeight === 'xsmall';
   const compactRowHeightPx = (ROW_HEIGHT_CONFIG[settings.rowHeight] || ROW_HEIGHT_CONFIG.medium).px;
@@ -516,7 +508,15 @@ function FavoriteItem({
           onPrepareExternalDrag?.(sortId, externalDragInfo);
         }
       }}
-      className={`favorite-item group relative flex flex-col ${isMultiSelectMode ? 'pl-9 pr-2.5' : 'px-2.5'} py-2 ${selectedClasses} ${isCardStyle ? 'rounded-md' : ''} ${isDraggable ? 'cursor-move' : 'cursor-pointer'} transition-all ${settings.uiAnimationEnabled !== false ? 'hover:translate-y-[-3px]' : 'no-animation'} ${getHeightClass()}`}
+      className={
+        'favorite-item group relative flex flex-col ' +
+        (isMultiSelectMode ? 'pl-9 pr-2.5' : 'px-2.5') + ' py-2 ' +
+        selectedClasses + ' ' +
+        (isCardStyle ? 'rounded-md' : '') + ' ' +
+        (isDraggable ? 'cursor-move' : 'cursor-pointer') + ' transition-all ' +
+        (settings.uiAnimationEnabled !== false ? 'hover:translate-y-[-3px]' : 'no-animation') + ' ' +
+        getHeightClass()
+      }
       onClick={handleClick}
       onContextMenu={handleContextMenu}
       onMouseEnter={handleMouseEnter}
@@ -582,7 +582,7 @@ function FavoriteItem({
         {showGroupBadge && (
           <Tooltip content={item.group_name} placement="bottom" asChild>
             <span
-              className={`${groupBadgeClasses(groupColor)}`}
+              className={groupBadgeClasses}
               style={groupColor ? {
                 backgroundColor: groupColor,
                 backgroundImage: `linear-gradient(135deg, ${groupColor}dd, ${groupColor})`
@@ -593,7 +593,7 @@ function FavoriteItem({
           </Tooltip>
         )}
         {/* 序号 */}
-        {showIndex && <span className={`${numberBadgeClasses} pointer-events-none`}>
+        {showIndex && <span className={numberBadgeClasses + ' pointer-events-none'}>
           {index + 1}
         </span>}
       </div>
@@ -687,7 +687,9 @@ function areFavoriteItemPropsEqual(prevProps, nextProps) {
     && prevProps.isDragActive === nextProps.isDragActive
     && prevProps.showIndex === nextProps.showIndex
     && prevProps.animationDelay === nextProps.animationDelay
-    && prevProps.onPrepareExternalDrag === nextProps.onPrepareExternalDrag;
+    && prevProps.onPrepareExternalDrag === nextProps.onPrepareExternalDrag
+    && prevProps.groupColorMap === nextProps.groupColorMap
+    && prevProps.currentGroup === nextProps.currentGroup;
 }
 
 export default memo(FavoriteItem, areFavoriteItemPropsEqual);

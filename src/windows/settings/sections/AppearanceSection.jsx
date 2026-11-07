@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSnapshot } from 'valtio';
@@ -87,10 +87,10 @@ function AppearanceSection({
   return <SettingsSection title={t('settings.appearance.title')} description={t('settings.appearance.description')}>
       <div className="space-y-6">
         <div>
-          <label className={`${fieldTitleClass} mb-3`}>
+          <label className="block text-sm font-semibold leading-5 text-qc-fg mb-3">
             {t('settings.appearance.themeSelect')}
           </label>
-          <p className={`${fieldDescClass} mb-4`}>
+          <p className="text-xs leading-5 text-qc-fg-subtle mb-4">
             {t('settings.appearance.themeSelectDesc')}
           </p>
           
@@ -100,10 +100,10 @@ function AppearanceSection({
         </div>
 
         {(theme === 'light' || theme === 'auto') && <div className="animate-slide-in-left-fast">
-            <label className={`${fieldTitleClass} mb-3`}>
+            <label className="block text-sm font-semibold leading-5 text-qc-fg mb-3">
               {t('settings.appearance.lightThemeStyle') || '亮色风格'}
             </label>
-            <p className={`${fieldDescClass} mb-4`}>
+            <p className="text-xs leading-5 text-qc-fg-subtle mb-4">
               {t('settings.appearance.lightThemeStyleDesc') || '选择亮色主题的显示风格'}
             </p>
 
@@ -143,10 +143,10 @@ function AppearanceSection({
           </div>}
 
         {(theme === 'dark' || theme === 'auto') && <div className="animate-slide-in-left-fast">
-            <label className={`${fieldTitleClass} mb-3`}>
+            <label className="block text-sm font-semibold leading-5 text-qc-fg mb-3">
               {t('settings.appearance.darkThemeStyle') || '暗色风格'}
             </label>
-            <p className={`${fieldDescClass} mb-4`}>
+            <p className="text-xs leading-5 text-qc-fg-subtle mb-4">
               {t('settings.appearance.darkThemeStyleDesc') || '选择暗色主题的显示风格'}
             </p>
 

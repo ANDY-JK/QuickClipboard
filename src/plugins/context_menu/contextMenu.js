@@ -1,4 +1,4 @@
-import "@tabler/icons-webfont/dist/tabler-icons.min.css";
+import "@shared/styles/tabler-icons-subset.css";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -429,7 +429,7 @@ class MenuRenderer {
 
     if (item.icon) {
       const icon = document.createElement("i");
-      icon.className = `${className} ${item.icon}`;
+      icon.className = className + " " + item.icon;
       if (item.iconColor) icon.style.color = item.iconColor;
       parent.appendChild(icon);
       return true;
@@ -452,7 +452,7 @@ class MenuRenderer {
 
     if (item.icon) {
       const icon = document.createElement("i");
-      icon.className = `menu-item-icon ${item.icon}`;
+      icon.className = "menu-item-icon " + item.icon;
       if (item.iconColor) icon.style.color = item.iconColor;
       parent.appendChild(icon);
       return;

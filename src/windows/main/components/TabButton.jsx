@@ -34,7 +34,7 @@ function TabButton({
     ${uiAnimationEnabled ? 'hover:scale-105' : ''}
     ${isActive
       ? 'qc-active-icon-button bg-[var(--qc-accent)] text-[var(--qc-accent-fg)] shadow-md hover:bg-[var(--qc-accent)]'
-      : 'text-qc-fg-muted hover:bg-qc-hover'}
+      : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'}
   `;
   const buttonStyle = uiAnimationEnabled ? {
     transitionProperty: 'transform, box-shadow, background-color, color',
@@ -52,7 +52,10 @@ function TabButton({
     >
       <Tooltip content={label} placement={tooltipPlacement} asChild>
         <button
+          type="button"
           onClick={handleClick}
+          aria-label={label}
+          aria-pressed={isActive}
           className={buttonClassName}
           style={buttonStyle}
         >

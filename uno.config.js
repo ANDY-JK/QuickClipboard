@@ -36,18 +36,26 @@ export default defineConfig({
   theme: {
     colors: {
       // QuickClipboard 主题 token（由 CSS 变量驱动）
+      // 注意：UnoCSS 的颜色解析按「-」逐段下钻，带连字符的扁平 key（如 'fg-muted'）
+      // 无法被 text-qc-fg-muted / bg-qc-panel-2 命中，因此多段 token 必须写成嵌套结构。
       qc: {
-        fg: 'var(--qc-fg, #111827)',
-        'fg-muted': 'var(--qc-fg-muted, #6b7280)',
-        'fg-subtle': 'var(--qc-fg-subtle, #9ca3af)',
+        fg: {
+          DEFAULT: 'var(--qc-fg, #111827)',
+          muted: 'var(--qc-fg-muted, #6b7280)',
+          subtle: 'var(--qc-fg-subtle, #9ca3af)',
+        },
         surface: 'var(--qc-surface, #ffffff)',
-        panel: 'var(--qc-panel, #f9f9f9)',
-        'panel-2': 'var(--qc-panel-2, #e5e7eb)',
+        panel: {
+          DEFAULT: 'var(--qc-panel, #f9f9f9)',
+          2: 'var(--qc-panel-2, #e5e7eb)',
+        },
         hover: 'var(--qc-hover, rgba(156, 163, 175, 0.25))',
         active: 'var(--qc-active, rgba(59, 130, 246, 0.12))',
         favorite: 'var(--qc-favorite, #eab308)',
-        border: 'var(--qc-border, rgba(17, 24, 39, 0.12))',
-        'border-strong': 'var(--qc-border-strong, rgba(17, 24, 39, 0.22))',
+        border: {
+          DEFAULT: 'var(--qc-border, rgba(17, 24, 39, 0.12))',
+          strong: 'var(--qc-border-strong, rgba(17, 24, 39, 0.22))',
+        },
       },
       primary: {
         50: '#eff6ff',
@@ -136,6 +144,11 @@ export default defineConfig({
     [/^bg-theme-(\d{1,4})$/, ([, step]) => ({ 'background-color': `var(--theme-${step})` })],
     [/^text-theme-(\d{1,4})$/, ([, step]) => ({ color: `var(--theme-${step})` })],
     [/^border-theme-(\d{1,4})$/, ([, step]) => ({ 'border-color': `var(--theme-${step})` })],
+
+    // transition-[...] 的属性白名单不含 grid-template-rows（UnoCSS 不支持该属性），
+    // 而 toast 需要同时过渡 rows / opacity / margin。这里用一条工具类一次声明完整属性列表：
+    // 若拆成两个类分别写 transition-property，后出现的声明会覆盖前一个，实际只生效一项。
+    [/^transition-toast-layout$/, () => ({ 'transition-property': 'grid-template-rows, opacity, margin' })],
   ],
 })
 

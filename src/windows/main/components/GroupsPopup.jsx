@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useSnapshot } from 'valtio';
 import { useState, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -699,7 +699,7 @@ const GroupsPopup = forwardRef(({
           </div>
 
             <div className="mt-auto p-2 pt-1">
-              <Tooltip content={isSidebarCollapsed ? '展开分组栏' : '收起分组栏'} placement="right" asChild>
+              <Tooltip content={isSidebarCollapsed ? (t('sidebar.expandGroups') || '展开分组栏') : (t('sidebar.collapseGroups') || '收起分组栏')} placement="right" asChild>
                 <button
                   type="button"
                   onClick={handleToggleSidebarCollapse}
@@ -715,7 +715,7 @@ const GroupsPopup = forwardRef(({
                   />
                   {!isSidebarCollapsed && (
                     <span className="text-[12px] font-medium leading-none whitespace-nowrap">
-                      收起
+                      {t('sidebar.collapse') || '收起'}
                     </span>
                   )}
                 </button>
@@ -755,7 +755,7 @@ const GroupsPopup = forwardRef(({
       >
         {/* 弹出面板 */}
         {isOpen && (
-          <div className={`${panelClassName} ${panelAnimationClass}`} style={panelStyle}>
+          <div className={panelClassName + ' ' + panelAnimationClass} style={panelStyle}>
             {/* 头部 */}
             <div className="flex items-center justify-between px-2.5 py-2 border-b border-qc-border">
               <h3 className="text-xs font-semibold text-qc-fg">

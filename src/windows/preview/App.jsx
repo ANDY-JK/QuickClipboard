@@ -1403,7 +1403,7 @@ function App() {
 
   if (!previewData || !hasMousePosition) {
     return (
-      <div className="preview-container fixed inset-0 overflow-hidden bg-transparent">
+      <div className="fixed inset-0 overflow-hidden bg-transparent">
         <div
           className="preview-theme-anchor pointer-events-none absolute opacity-0"
           style={{ width: 0, height: 0, overflow: 'hidden' }}
@@ -1486,7 +1486,7 @@ function App() {
   };
 
   return (
-    <div className={`preview-container fixed inset-0 overflow-hidden bg-transparent ${isDark ? 'dark' : ''}`}>
+    <div className={`fixed inset-0 overflow-hidden bg-transparent ${isDark ? 'dark' : ''}`}>
       <div
         className="preview-theme-anchor pointer-events-none absolute opacity-0"
         style={{ width: 0, height: 0, overflow: 'hidden' }}
@@ -1606,7 +1606,7 @@ function App() {
           }}
         >
           <div
-            className="preview-surface preview-text-surface relative z-10 w-full h-full border border-qc-border-strong overflow-hidden"
+            className="preview-surface relative z-10 w-full h-full border border-qc-border-strong overflow-hidden"
             style={{
               borderRadius: '8px',
               boxSizing: 'border-box',
@@ -1683,7 +1683,7 @@ function App() {
           }}
         >
           <div
-            className="preview-surface preview-file-surface relative z-10 w-full h-full border border-qc-border-strong overflow-hidden"
+            className="preview-surface relative z-10 w-full h-full border border-qc-border-strong overflow-hidden"
             style={{
               borderRadius: '8px',
               backgroundColor: textContainerBackgroundColor,

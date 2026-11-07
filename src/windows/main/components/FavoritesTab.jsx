@@ -2,6 +2,7 @@ import { useRef, forwardRef, useImperativeHandle, useEffect, useState, useCallba
 import { useSnapshot } from 'valtio';
 import { listen } from '@tauri-apps/api/event';
 import { favoritesStore, refreshFavorites } from '@shared/store';
+import { navigationStore } from '@shared/store/navigationStore';
 import { groupsStore } from '@shared/store/groupsStore';
 import { settingsStore } from '@shared/store/settingsStore';
 import { openBlankEditor } from '@shared/api/textEditor';
@@ -12,7 +13,8 @@ const SEARCH_DEBOUNCE_DELAY = 200;
 const FavoritesTab = forwardRef(({
   contentFilter,
   pasteFilter = 'all',
-  searchQuery
+  searchQuery,
+  onClearFilters
 }, ref) => {
   const snap = useSnapshot(favoritesStore);
   const settings = useSnapshot(settingsStore);
@@ -109,7 +111,7 @@ const FavoritesTab = forwardRef(({
   // 判断是否显示添加收藏按钮
   const shouldShowAddFavorite = !snap.isMultiSelectMode;
   return <div className="h-full flex flex-col relative">
-      <FavoritesList ref={listRef} onScrollStateChange={handleScrollStateChange} />
+      <FavoritesList ref={listRef} onScrollStateChange={handleScrollStateChange} onClearFilters={onClearFilters} />
       
       {/* 悬浮工具栏 */}
       <FloatingToolbar showScrollTop={!isAtTop && snap.totalCount > 0} showAddFavorite={shouldShowAddFavorite} onScrollTop={() => handleScrollToTop({

@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import './SettingsSearch.css';
@@ -24,9 +24,7 @@ function SettingsSearch({ onNavigate, className = '' }) {
     const settings = bundle.settings || {};
     const sectionsMap = settings.sections || {};
     const visibleSectionIds = new Set((navigationItems || []).map(n => n.id));
-    const sectionAliases = {
-      webdav: 'syncTransfer',
-    };
+    const sectionAliases = {};
 
     const allIds = Array.from(new Set([
       ...Object.keys(settings.sections || {}),
@@ -166,7 +164,7 @@ function SettingsSearch({ onNavigate, className = '' }) {
   };
 
   return (
-    <div className={`relative ${className}`}>
+    <div className={'relative ' + className}>
       {/* 搜索输入框 */}
       <div className="relative">
         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-10">

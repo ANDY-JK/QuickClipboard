@@ -51,7 +51,7 @@ function SegmentedControl({
   };
 
   return (
-    <div className={`${containerClass} ${className}`} style={containerStyle}>
+    <div className={containerClass + ' ' + className} style={containerStyle}>
       {options.map((option, index) => (
         <button
           key={option.value}

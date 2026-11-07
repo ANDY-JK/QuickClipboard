@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useTranslation } from 'react-i18next';
 import { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { useSnapshot } from 'valtio';
@@ -6,6 +6,7 @@ import { settingsStore } from '@shared/store/settingsStore';
 import { normalizeVisibleOptionalTabs } from '@shared/constants/tabVisibility';
 import TabButton from './TabButton';
 import FilterButton from './FilterButton';
+import FilterTypeDropdown from './FilterTypeDropdown';
 import GroupsPopup from './GroupsPopup';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
 
@@ -125,20 +126,28 @@ function TabNavigation({
     label: t('filter.link') || '链接',
     icon: "ti ti-link"
   }];
-  const pasteFilters = [{ id: 'unpasted', label: '未粘贴', icon: 'ti ti-clipboard-x' }, {
-    id: 'pasted', label: '已粘贴', icon: 'ti ti-clipboard-check'
+  const pasteFilters = [{ id: 'unpasted', label: t('filter.unpasted') || '未粘贴', icon: 'ti ti-clipboard-x' }, {
+    id: 'pasted', label: t('filter.pasted') || '已粘贴', icon: 'ti ti-clipboard-check'
   }];
   const selectedFilters = String(contentFilter || 'all')
     .split(',')
     .map(value => value.trim())
     .filter(value => FILTER_IDS.includes(value));
-  const isFilterSelected = id => selectedFilters.includes(id);
   const selectedPasteFilters = String(pasteFilter || 'all')
     .split(',')
     .map(value => value.trim())
     .filter(value => pasteFilters.some(filter => filter.id === value));
   const isPasteFilterSelected = id => selectedPasteFilters.includes(id);
   const sidebarShowLabel = isSidebarLayout ? !isSidebarCollapsed : true;
+  const groupsLabel = t('groups.title') || '分组';
+  const sidebarToggleLabel = sidebarShowLabel
+    ? (t('sidebar.collapseSidebar') || '收起侧边栏')
+    : (t('sidebar.expandSidebar') || '展开侧边栏');
+  // 图标按钮的无障碍名称：收起态没有可见文字，统一由 i18n 文案提供 aria-label。
+  const iconButtonA11y = (label, pressed) => ({
+    'aria-label': label,
+    ...(pressed === undefined ? {} : { 'aria-pressed': !!pressed })
+  });
 
   const updateTabIndicator = useCallback(() => {
     const activeElement = tabsRef.current[activeTab];
@@ -298,10 +307,8 @@ function TabNavigation({
     onEmojiModeChange(id);
   };
 
-  const handleFilterChange = id => {
-    const nextFilters = isFilterSelected(id)
-      ? selectedFilters.filter(filterId => filterId !== id)
-      : [...selectedFilters, id];
+  const handleTypeFilterChange = ids => {
+    const nextFilters = ids.filter(id => FILTER_IDS.includes(id));
     onFilterChange(nextFilters.join(',') || 'all');
   };
 
@@ -314,6 +321,7 @@ function TabNavigation({
 
   const renderSidebarButton = ({
     id,
+    itemKey,
     label,
     icon,
     emoji,
@@ -327,10 +335,11 @@ function TabNavigation({
     };
 
     return (
-      <div ref={buttonRef} className={showLabel ? 'relative inline-flex h-9 w-full' : 'relative inline-flex h-9 w-10'}>
+      <div key={itemKey} ref={buttonRef} className={showLabel ? 'relative inline-flex h-9 w-full' : 'relative inline-flex h-9 w-10'}>
         <Tooltip content={label} placement="right" asChild>
           <button
             onClick={handleClick}
+            {...iconButtonA11y(label, isActive)}
             className={`
               relative z-10 flex items-center h-9 rounded-lg
               ${showLabel ? 'justify-start gap-2 px-3 w-full min-w-0 whitespace-nowrap' : 'justify-center gap-0 px-0 w-10'}
@@ -338,7 +347,7 @@ function TabNavigation({
               ${uiAnimationEnabled ? 'hover:scale-[1.01]' : ''}
               ${isActive
                 ? 'bg-blue-500 text-white shadow-md hover:bg-blue-500'
-                : 'text-qc-fg-muted hover:bg-qc-hover'}
+                : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'}
             `}
             style={uiAnimationEnabled ? {
               transitionProperty: 'transform, box-shadow, background-color, color',
@@ -392,6 +401,7 @@ function TabNavigation({
               {activeTab === 'emoji'
                 ? emojiModes.map(mode => renderSidebarButton({
                     id: mode.id,
+                    itemKey: mode.id,
                     label: mode.label,
                     icon: mode.icon,
                     emoji: mode.emoji,
@@ -402,21 +412,29 @@ function TabNavigation({
                       emojiModesRef.current[mode.id] = el;
                     }
                   }))
-                : [...filters, ...pasteFilters].map(filter => renderSidebarButton({
-                    id: filter.id,
-                    label: filter.label,
-                    icon: filter.icon,
-                    isActive: pasteFilters.some(item => item.id === filter.id)
-                      ? isPasteFilterSelected(filter.id)
-                      : isFilterSelected(filter.id),
-                    onClick: pasteFilters.some(item => item.id === filter.id)
-                      ? handlePasteFilterChange
-                      : handleFilterChange,
-                    showLabel: sidebarShowLabel,
-                    buttonRef: el => {
-                      filtersRef.current[filter.id] = el;
-                    }
-                  }))
+                : (
+                  <>
+                    <FilterTypeDropdown
+                      mode="sidebar"
+                      showLabel={sidebarShowLabel}
+                      filters={filters}
+                      selectedIds={selectedFilters}
+                      onChange={handleTypeFilterChange}
+                    />
+                    {pasteFilters.map(filter => renderSidebarButton({
+                      id: filter.id,
+                      itemKey: filter.id,
+                      label: filter.label,
+                      icon: filter.icon,
+                      isActive: isPasteFilterSelected(filter.id),
+                      onClick: handlePasteFilterChange,
+                      showLabel: sidebarShowLabel,
+                      buttonRef: el => {
+                        filtersRef.current[filter.id] = el;
+                      }
+                    }))}
+                  </>
+                )
               }
             </div>
           </div>
@@ -428,28 +446,29 @@ function TabNavigation({
                 style={{ backgroundColor: 'var(--bg-titlebar-border, var(--qc-border-strong))', opacity: 0.95 }}
               />
               <div className="px-2 py-2">
-                <Tooltip content="分组" placement="right" asChild>
+                <Tooltip content={groupsLabel} placement="right" asChild>
                   <button
                     type="button"
                     onClick={() => groupsPopupRef.current?.togglePopup?.()}
+                    {...iconButtonA11y(groupsLabel)}
                     className={`relative z-10 flex items-center h-9 rounded-lg focus:outline-none transition-all duration-200 ${
                       sidebarShowLabel
                         ? `justify-start gap-2 px-3 w-full ${
                             isGroupsPanelOpen
                               ? 'qc-active-icon-button bg-[var(--qc-accent)] text-[var(--qc-accent-fg)] shadow-md hover:bg-[var(--qc-accent)]'
-                              : 'text-qc-fg-muted hover:bg-qc-hover'
+                              : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'
                           }`
                         : `justify-start gap-2 px-3 w-10 overflow-hidden ${
                             isGroupsPanelOpen
                               ? 'qc-active-icon-button bg-[var(--qc-accent)] text-[var(--qc-accent-fg)] shadow-md hover:bg-[var(--qc-accent)]'
-                              : 'text-qc-fg-muted hover:bg-qc-hover'
+                              : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'
                           }`
                     }`}
                   >
                     <i className="ti ti-folders" style={{ fontSize: 16 }} />
                     {sidebarShowLabel && (
                       <span className="text-[12px] font-medium leading-none whitespace-nowrap">
-                        分组
+                        {groupsLabel}
                       </span>
                     )}
                   </button>
@@ -458,14 +477,15 @@ function TabNavigation({
             </>
 
           <div className="mt-auto p-2 pt-1">
-            <Tooltip content={sidebarShowLabel ? '收起侧边栏' : '展开侧边栏'} placement="right" asChild>
+            <Tooltip content={sidebarToggleLabel} placement="right" asChild>
               <button
                 type="button"
                 onClick={() => setIsSidebarCollapsed(prev => !prev)}
+                {...iconButtonA11y(sidebarToggleLabel)}
                 className={`relative z-10 flex items-center h-9 rounded-lg focus:outline-none transition-all duration-200 ${
                   sidebarShowLabel
-                    ? 'justify-start gap-2 px-3 w-full text-qc-fg-muted hover:bg-qc-hover'
-                    : 'justify-start gap-2 px-3 w-10 text-qc-fg-muted hover:bg-qc-hover overflow-hidden'
+                    ? 'justify-start gap-2 px-3 w-full text-[var(--qc-fg-muted)] hover:bg-qc-hover'
+                    : 'justify-start gap-2 px-3 w-10 text-[var(--qc-fg-muted)] hover:bg-qc-hover overflow-hidden'
                 }`}
               >
                 <i
@@ -474,7 +494,7 @@ function TabNavigation({
                 />
                 {sidebarShowLabel && (
                   <span className="text-[12px] font-medium leading-none whitespace-nowrap">
-                    收起
+                    {t('sidebar.collapse') || '收起'}
                   </span>
                 )}
               </button>
@@ -568,10 +588,12 @@ function TabNavigation({
                   <Tooltip content={mode.label} placement={isSidebarLayout ? 'right' : 'bottom'} asChild>
                     <button
                       onClick={() => handleEmojiModeChange(mode.id)}
+                      aria-label={mode.label}
+                      aria-pressed={emojiMode === mode.id}
                       className={`relative z-10 flex items-center justify-center w-full h-full rounded-lg focus:outline-none ${uiAnimationEnabled ? 'hover:scale-105' : ''} ${
                         emojiMode === mode.id
                           ? 'qc-active-icon-button bg-[var(--qc-accent)] text-[var(--qc-accent-fg)] shadow-md hover:bg-[var(--qc-accent)]'
-                          : 'text-qc-fg-muted hover:bg-qc-hover'
+                          : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'
                       }`}
                       style={uiAnimationEnabled ? {
                         transitionProperty: 'transform, box-shadow, background-color, color',
@@ -586,17 +608,20 @@ function TabNavigation({
             : (
                 <>
                   <div className={isCompactFiltersLayout
-                    ? 'grid grid-cols-3 grid-rows-2 gap-0 h-8 flex-1 min-w-0'
+                    ? 'flex items-center gap-0 h-8 flex-1 min-w-0'
                     : 'flex items-center gap-0 h-9 flex-1 min-w-0'}>
-                    {[...filters, ...pasteFilters].map(filter => (
+                    <FilterTypeDropdown
+                      mode="horizontal"
+                      compact={isCompactFiltersLayout}
+                      filters={filters}
+                      selectedIds={selectedFilters}
+                      onChange={handleTypeFilterChange}
+                    />
+                    {pasteFilters.map(filter => (
                       <FilterButton key={filter.id} id={filter.id} label={filter.label}
                         icon={filter.icon}
-                        isActive={FILTER_IDS.includes(filter.id)
-                          ? isFilterSelected(filter.id)
-                          : isPasteFilterSelected(filter.id)}
-                        onClick={FILTER_IDS.includes(filter.id)
-                          ? handleFilterChange
-                          : handlePasteFilterChange}
+                        isActive={isPasteFilterSelected(filter.id)}
+                        onClick={handlePasteFilterChange}
                         stretch
                         compact={isCompactFiltersLayout}
                         buttonRef={el => { filtersRef.current[filter.id] = el; }} />

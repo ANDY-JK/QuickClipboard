@@ -1,7 +1,7 @@
 // 设置中的Tab 栏组件
 function TabBar({ tabs, activeTab, onTabChange, className = '' }) {
   return (
-    <div className={`settings-tab-bar flex gap-2 px-6 py-3 bg-qc-panel border-b border-qc-border transition-colors duration-500 ${className}`}>
+    <div className={'settings-tab-bar flex gap-2 px-6 py-3 bg-qc-panel border-b border-qc-border transition-colors duration-500 ' + className}>
       {tabs.map(tab => {
         const isActive = activeTab === tab.id;
         return (

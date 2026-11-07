@@ -1,11 +1,12 @@
 import { Virtuoso } from 'react-virtuoso';
 import { useCallback, useState, useMemo, useRef, forwardRef, useImperativeHandle, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSnapshot } from 'valtio';
 import { useCustomScrollbar } from '@shared/hooks/useCustomScrollbar';
 import { useSortableList } from '@shared/hooks/useSortable';
 import { useNavigation } from '@shared/hooks/useNavigation';
 import { ROW_HEIGHT_CONFIG } from '@shared/hooks/useItemCommon';
-import { favoritesStore, loadFavoritesRange, pasteFavorite } from '@shared/store/favoritesStore';
+import { favoritesStore, loadFavoritesRange, pasteFavorite, cancelFavoritesMaintenanceRetry } from '@shared/store/favoritesStore';
 import { groupsStore } from '@shared/store/groupsStore';
 import { navigationStore } from '@shared/store/navigationStore';
 import { settingsStore } from '@shared/store/settingsStore';
@@ -20,8 +21,10 @@ const LIST_VIEWPORT_PADDING = 120;
 const SELECTION_LOAD_PAGE_SIZE = 100;
 
 const FavoritesList = forwardRef(({
-  onScrollStateChange
+  onScrollStateChange,
+  onClearFilters
 }, ref) => {
+  const { t } = useTranslation();
   const [scrollerElement, setScrollerElement] = useState(null);
   const virtuosoRef = useRef(null);
   const currentRangeRef = useRef({
@@ -34,7 +37,17 @@ const FavoritesList = forwardRef(({
   const snap = useSnapshot(navigationStore);
   const favSnap = useSnapshot(favoritesStore);
   const isMultiSelectMode = favSnap.isMultiSelectMode;
+
+  // 组件卸载时取消维护期补刷，避免窗口销毁后仍有定时请求触发。
+  useEffect(() => () => {
+    cancelFavoritesMaintenanceRetry();
+  }, []);
   const groupsSnap = useSnapshot(groupsStore);
+  // 分组颜色映射只随分组列表变化重建，列表行不再各自订阅 groupsStore。
+  const groupColorMap = useMemo(
+    () => new Map(groupsSnap.groups.map(group => [group.name, group.color || '#dc2626'])),
+    [groupsSnap.groups]
+  );
   const settings = useSnapshot(settingsStore);
   const showIndex = settings.showListIndex !== false;
   const selectedIdSet = useMemo(() => new Set(favSnap.selectedEntries.map(entry => entry.id)), [favSnap.selectedEntries]);
@@ -378,20 +391,36 @@ const FavoritesList = forwardRef(({
     }
   }), [currentSelectedIndex, executeCurrentItem, groupsSnap.currentGroup, isMultiSelectMode, itemsWithId, navigateDown, navigateUp]);
   if (favSnap.loading && favSnap.filter) {
-    return <div className="flex-1 bg-qc-surface overflow-hidden flex items-center justify-center transition-colors duration-500 favorites-list" data-no-drag>
-        <div className="flex flex-col items-center gap-2 text-qc-fg-subtle">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-qc-border border-t-theme-9"></div>
-          <p className="text-sm">搜索中...</p>
+    return <div className="flex-1 bg-qc-surface overflow-hidden flex items-center justify-center transition-colors duration-500" data-no-drag>
+        <div className="flex flex-col items-center gap-2 text-[var(--qc-fg-subtle)]">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-qc-border border-t-[var(--theme-9)]"></div>
+          <p className="text-sm">{t('common.searching', '搜索中...')}</p>
         </div>
       </div>;
   }
 
   if (favSnap.totalCount === 0) {
-    return <div className="flex-1 bg-qc-surface overflow-hidden flex items-center justify-center transition-colors duration-500 favorites-list" data-no-drag>
-        <p className="text-qc-fg-subtle text-sm">
-          {favSnap.filter ? '无搜索结果' : '暂无收藏内容'}
-        </p>
-      </div>;
+    const hasActiveFilters = (favSnap.contentType && favSnap.contentType !== 'all')
+      || (favSnap.pasteStatus && favSnap.pasteStatus !== 'all');
+    return <div className="flex-1 bg-qc-surface overflow-hidden flex items-center justify-center transition-colors duration-500" data-no-drag>
+      {favSnap.filter ? (
+        <p className="text-[var(--qc-fg-subtle)] text-sm">{t('common.noResults', '无搜索结果')}</p>
+      ) : hasActiveFilters ? (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-[var(--qc-fg-subtle)] text-sm">{t('favorites.emptyFilter', '当前筛选无记录')}</p>
+          <button
+            type="button"
+            onClick={onClearFilters}
+            aria-label={t('common.clearFilters', '清除筛选')}
+            className="text-sm text-[var(--qc-accent)] hover:underline focus:outline-none py-1.5 -my-1.5"
+          >
+            {t('common.clearFilters', '清除筛选')}
+          </button>
+        </div>
+      ) : (
+        <p className="text-[var(--qc-fg-subtle)] text-sm">{t('favorites.empty', '暂无收藏内容')}</p>
+      )}
+    </div>;
   }
   const rowConfig = ROW_HEIGHT_CONFIG[settings.rowHeight] || ROW_HEIGHT_CONFIG.medium;
   const isCardStyle = settings.listStyle === 'card';
@@ -407,7 +436,7 @@ const FavoritesList = forwardRef(({
   
   return <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDndDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDndDragCancel} cancelDrop={shouldCancelDndDrop} modifiers={[]}>
     <ExternalDragSafeZones visible={showSafeZones} />
-      <div className="flex-1 bg-qc-surface overflow-hidden custom-scrollbar-container transition-colors duration-500 favorites-list" data-no-drag>
+      <div className="flex-1 bg-qc-surface overflow-hidden custom-scrollbar-container transition-colors duration-500" data-no-drag>
         <SortableContext items={itemsWithId.map(item => item._sortId)} strategy={strategy}>
           <Virtuoso ref={virtuosoRef} totalCount={favSnap.totalCount || 0} scrollerRef={scrollerRefCallback} atTopStateChange={atTop => {
           onScrollStateChange?.({
@@ -425,14 +454,14 @@ const FavoritesList = forwardRef(({
             return isCardStyle ? <div style={getCardOuterStyle(index)}>
                 <div className={heightClass}>
                   <div className="h-full rounded-lg border border-qc-border bg-qc-panel p-3 animate-pulse">
-                    <div className="h-4 bg-qc-panel-2 rounded w-3/4 mb-2"></div>
-                    <div className="h-3 bg-qc-panel-2 rounded w-1/2"></div>
+                    <div className="h-4 bg-[var(--qc-panel-2)] rounded w-3/4 mb-2"></div>
+                    <div className="h-3 bg-[var(--qc-panel-2)] rounded w-1/2"></div>
                   </div>
                 </div>
               </div> : <div className={heightClass}>
                 <div className="h-full border-b border-qc-border bg-qc-panel p-3 animate-pulse">
-                  <div className="h-4 bg-qc-panel-2 rounded w-3/4 mb-2"></div>
-                  <div className="h-3 bg-qc-panel-2 rounded w-1/2"></div>
+                  <div className="h-4 bg-[var(--qc-panel-2)] rounded w-3/4 mb-2"></div>
+                  <div className="h-3 bg-[var(--qc-panel-2)] rounded w-1/2"></div>
                 </div>
               </div>;
           }
@@ -455,6 +484,8 @@ const FavoritesList = forwardRef(({
                     showIndex={showIndex}
                     animationDelay={animationDelay}
                     onPrepareExternalDrag={prepareExternalDrag}
+                    groupColorMap={groupColorMap}
+                    currentGroup={groupsSnap.currentGroup}
                   />
                 </div>
               </div> : <div className={heightClass}>
@@ -473,6 +504,8 @@ const FavoritesList = forwardRef(({
                   showIndex={showIndex}
                   animationDelay={animationDelay}
                   onPrepareExternalDrag={prepareExternalDrag}
+                  groupColorMap={groupColorMap}
+                  currentGroup={groupsSnap.currentGroup}
                 />
               </div>;
         }} isScrolling={handleVirtuosoScrollState} style={{
@@ -485,7 +518,7 @@ const FavoritesList = forwardRef(({
         {activeItem && activeIndex !== -1 && (() => {
           const overlayClass = settings.rowHeight === 'auto' ? 'h-auto' : heightClass;
           return (
-            <div className={`${overlayClass} rounded-md border border-qc-border shadow-lg bg-qc-panel/70 backdrop-blur-md`}>
+            <div className={overlayClass + ' rounded-md border border-qc-border shadow-lg bg-qc-panel/70 backdrop-blur-md'}>
               <FavoriteItem
                 item={activeItem.item}
                 index={activeIndex}
@@ -493,6 +526,8 @@ const FavoritesList = forwardRef(({
                 isDragActive={!isMultiSelectMode}
                 isDraggable={false}
                 showIndex={showIndex}
+                groupColorMap={groupColorMap}
+                currentGroup={groupsSnap.currentGroup}
               />
             </div>
           );

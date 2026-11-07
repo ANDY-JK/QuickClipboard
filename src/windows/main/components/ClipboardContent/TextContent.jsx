@@ -176,7 +176,7 @@ function TextContent({
     <div ref={wrapperRef} className="h-full min-h-0 overflow-hidden" style={wrapperStyle}>
       <div
         ref={containerRef}
-        className={`${textClass} text-qc-fg break-all whitespace-pre-wrap ${clampClass} overflow-hidden min-h-0 w-full`}
+        className={textClass + ' text-qc-fg break-all whitespace-pre-wrap ' + clampClass + ' overflow-hidden min-h-0 w-full'}
         style={autoClampStyle}
       >
         <span className={contentClass}>

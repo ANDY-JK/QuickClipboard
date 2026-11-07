@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useTranslation } from 'react-i18next';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
 
@@ -99,13 +99,13 @@ function EditorToolbar({
         {showModeSwitch && (
           <div className="text-editor-mode-switch flex items-center rounded border border-qc-border bg-qc-surface overflow-hidden">
             <button
-              className={`${modeButtonClasses} ${editMode === 'text' ? 'bg-blue-500 text-white border-blue-500' : 'text-qc-fg hover:bg-qc-hover'}`}
+              className={modeButtonClasses + ' ' + (editMode === 'text' ? 'bg-blue-500 text-white border-blue-500' : 'text-qc-fg hover:bg-qc-hover')}
               onClick={() => onEditModeChange?.('text')}
             >
               {t('textEditor.plainText')}
             </button>
             <button
-              className={`${modeButtonClasses} ${editMode === 'html' ? 'bg-blue-500 text-white border-blue-500' : 'text-qc-fg hover:bg-qc-hover'}`}
+              className={modeButtonClasses + ' ' + (editMode === 'html' ? 'bg-blue-500 text-white border-blue-500' : 'text-qc-fg hover:bg-qc-hover')}
               onClick={() => onEditModeChange?.('html')}
             >
               {t('textEditor.htmlMode', 'HTML')}

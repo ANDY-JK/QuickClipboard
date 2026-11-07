@@ -3,6 +3,7 @@ import { useSnapshot } from 'valtio';
 import { listen } from '@tauri-apps/api/event';
 import { clipboardStore, refreshClipboardHistory } from '@shared/store/clipboardStore';
 import { settingsStore } from '@shared/store/settingsStore';
+import { navigationStore } from '@shared/store/navigationStore';
 import ClipboardList from './ClipboardList';
 import FloatingToolbar from './FloatingToolbar';
 
@@ -10,7 +11,8 @@ const SEARCH_DEBOUNCE_DELAY = 200;
 const ClipboardTab = forwardRef(({
   contentFilter,
   pasteFilter = 'all',
-  searchQuery
+  searchQuery,
+  onClearFilters
 }, ref) => {
   const snap = useSnapshot(clipboardStore);
   const settings = useSnapshot(settingsStore);
@@ -18,17 +20,31 @@ const ClipboardTab = forwardRef(({
   const [isAtTop, setIsAtTop] = useState(true);
   const prevTotalCountRef = useRef(snap.totalCount);
   const searchDebounceRef = useRef(null);
+  const scrollTopTimeoutRef = useRef(null);
+
+  const clearScrollToTopTimeout = useCallback(() => {
+    if (scrollTopTimeoutRef.current) {
+      clearTimeout(scrollTopTimeoutRef.current);
+      scrollTopTimeoutRef.current = null;
+    }
+  }, []);
 
   const debouncedSearch = useCallback((query, filter) => {
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
 
-    searchDebounceRef.current = setTimeout(() => {
+    searchDebounceRef.current = setTimeout(async () => {
       clipboardStore.setFilter(query);
-      refreshClipboardHistory();
+      try {
+        await refreshClipboardHistory();
+      } catch (error) {
+        console.error('刷新剪贴板历史失败:', error);
+      }
     }, query ? SEARCH_DEBOUNCE_DELAY : 0);
   }, []);
+
+  useEffect(() => () => clearScrollToTopTimeout(), [clearScrollToTopTimeout]);
 
   useEffect(() => {
     clipboardStore.setContentType(contentFilter);
@@ -53,14 +69,18 @@ const ClipboardTab = forwardRef(({
     const setupListeners = async () => {
       const unlisten1 = await listen('window-show-animation', () => handleScrollToTop({ checkSetting: true, delay: 50 }));
       const unlisten2 = await listen('edge-snap-show', () => handleScrollToTop({ checkSetting: true, delay: 50 }));
+      const unlisten3 = await listen('window-hide-animation', clearScrollToTopTimeout);
+      const unlisten4 = await listen('edge-snap-hide', clearScrollToTopTimeout);
       return () => {
         unlisten1();
         unlisten2();
+        unlisten3();
+        unlisten4();
       };
     };
     let cleanup = setupListeners();
     return () => cleanup.then(fn => fn());
-  }, [settings.autoScrollToTopOnShow]);
+  }, [settings.autoScrollToTopOnShow, clearScrollToTopTimeout]);
 
   // 暴露导航方法给父组件
   useImperativeHandle(ref, () => ({
@@ -87,15 +107,17 @@ const ClipboardTab = forwardRef(({
       return;
     }
 
-    setTimeout(() => {
+    clearScrollToTopTimeout();
+    scrollTopTimeoutRef.current = setTimeout(() => {
       listRef.current?.scrollToTop?.();
       navigationStore.resetNavigation();
+      scrollTopTimeoutRef.current = null;
     }, delay);
   };
   
   return <div className="h-full flex flex-col relative">
     {/* 列表 */}
-    <ClipboardList ref={listRef} onScrollStateChange={handleScrollStateChange} />
+    <ClipboardList ref={listRef} onScrollStateChange={handleScrollStateChange} onClearFilters={onClearFilters} />
 
     {/* 悬浮工具栏 */}
     <FloatingToolbar showScrollTop={!isAtTop && snap.totalCount > 0} showAddFavorite={false} onScrollTop={() => handleScrollToTop({

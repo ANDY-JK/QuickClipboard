@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useEffect, useState } from 'react';
 import { TOAST_POSITIONS, TOAST_SIZES } from '@shared/store/toastStore';
 
@@ -152,7 +152,7 @@ function Toast({
   return (
     <div
       className={[
-        'inline-grid overflow-visible transition-[grid-template-rows,opacity,margin] duration-200 ease-out',
+        'inline-grid overflow-visible transition-toast-layout duration-200 ease-out',
         align === 'end' ? 'self-end' : 'self-start'
       ].join(' ')}
       style={{
@@ -186,7 +186,7 @@ function Toast({
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className={`${currentSize.text} break-words text-qc-fg`}>
+              <p className={currentSize.text + ' break-words text-qc-fg'}>
                 {messageText}
               </p>
             </div>

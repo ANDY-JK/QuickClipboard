@@ -28,12 +28,14 @@ function FilterButton({
       <Tooltip content={label} placement={tooltipPlacement} asChild>
         <button
           onClick={handleClick}
+          aria-label={label}
+          aria-pressed={!!isActive}
           className={`relative z-10 flex items-center justify-center w-full h-full rounded-none
             focus:outline-none
             ${uiAnimationEnabled ? 'active:scale-95 hover:scale-105' : ''}
             ${isActive
               ? 'text-[var(--qc-accent)]'
-              : 'text-qc-fg-muted hover:bg-qc-hover'}
+              : 'text-[var(--qc-fg-muted)] hover:bg-qc-hover'}
           `}
           style={uiAnimationEnabled ? {
             transitionProperty: 'transform, box-shadow, background-color, color',

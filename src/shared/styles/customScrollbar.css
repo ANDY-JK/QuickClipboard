@@ -86,3 +86,15 @@
   -ms-user-select: none;
 }
 
+/* 跨浏览器隐藏滚动条（UnoCSS 无内置 scrollbar-hide 规则，需在样式层提供真实定义） */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+

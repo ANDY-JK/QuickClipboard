@@ -1,5 +1,6 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useSnapshot } from 'valtio';
 import { settingsStore } from '@shared/store/settingsStore';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
@@ -11,6 +12,7 @@ const BottomMenuPopup = forwardRef(({
   title,
   menuItems = []
 }, ref) => {
+  const { t } = useTranslation();
   const settings = useSnapshot(settingsStore);
   const uiAnimationEnabled = settings.uiAnimationEnabled !== false;
   const [isOpen, setIsOpen] = useState(false);
@@ -113,7 +115,7 @@ const BottomMenuPopup = forwardRef(({
             {title}
           </h3>
           <div className="flex items-center gap-0.5">
-            <Tooltip content={isPinned ? '取消固定' : '固定'} placement="bottom" asChild>
+            <Tooltip content={isPinned ? t('clipboard.unpin', '取消固定') : t('clipboard.pin', '固定')} placement="bottom" asChild>
               <button onClick={togglePin} className={`p-1 rounded transition-all ${isPinned ? 'bg-blue-500 text-white' : 'hover:bg-qc-hover text-qc-fg-muted'}`}>
                 {isPinned ? <i className="ti ti-pinned" style={{
                   fontSize: 12

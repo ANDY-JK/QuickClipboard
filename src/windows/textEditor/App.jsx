@@ -261,7 +261,7 @@ function App() {
     <div className={outerContainerClasses} style={{
       padding: '5px'
     }}>
-      <div className={`${containerClasses} text-editor-shell`}>
+      <div className={containerClasses + ' text-editor-shell'}>
         <TitleBar title={title} hasChanges={hasChanges} />
 
         <EditorToolbar
