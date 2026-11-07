@@ -57,8 +57,9 @@ pub async fn get_favorites_history(
     search: Option<String>,
     content_type: Option<String>,
     paste_status: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<PaginatedResult<FavoriteItem>, String> {
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         let params = FavoritesQueryParams {
             offset: offset.unwrap_or(0),
             limit: limit.unwrap_or(50),
@@ -73,7 +74,13 @@ pub async fn get_favorites_history(
         Ok::<PaginatedResult<FavoriteItem>, String>(result)
     })
     .await
-    .map_err(|e| format!("任务执行失败: {}", e))?
+    .map_err(|e| format!("任务执行失败: {}", e))??;
+
+    for item in &result.items {
+        crate::services::asset_scope::allow_files_content(&app, &item.content);
+    }
+
+    Ok(result)
 }
 
 // 获取收藏总数
@@ -89,29 +96,26 @@ pub fn move_favorite_item_cmd(
     to_id: String,
 ) -> Result<(), String> {
     let result = move_favorite_item(from_id, to_id);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
 // 从剪贴板历史添加到收藏
 #[tauri::command]
-pub fn add_clipboard_to_favorites(id: i64, group_name: Option<String>) -> Result<FavoriteItem, String> {
-    let result = db_add_clipboard_to_favorites(id, group_name);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
-    result
+pub fn add_clipboard_to_favorites(
+    id: i64,
+    group_name: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<FavoriteItem, String> {
+    let mut item = db_add_clipboard_to_favorites(id, group_name)?;
+    hydrate_favorite_item_for_ui(&mut item);
+    crate::services::asset_scope::allow_files_content(&app, &item.content);
+    Ok(item)
 }
 
 // 移动收藏项到分组
 #[tauri::command]
 pub fn move_quick_text_to_group(id: String, group_name: String) -> Result<(), String> {
     let result = db_move_favorite_to_group(id, group_name);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
@@ -119,29 +123,28 @@ pub fn move_quick_text_to_group(id: String, group_name: String) -> Result<(), St
 #[tauri::command]
 pub fn delete_quick_text(id: String) -> Result<(), String> {
     let result = db_delete_favorite(id);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
 #[tauri::command]
 pub fn delete_favorite_items(ids: Vec<String>) -> Result<(), String> {
     let result = db_delete_favorites(&ids);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
 // 根据 ID 获取单个收藏项
 #[tauri::command]
-pub fn get_favorite_item_by_id_cmd(id: String, max_length: Option<usize>) -> Result<FavoriteItem, String> {
+pub fn get_favorite_item_by_id_cmd(
+    id: String,
+    max_length: Option<usize>,
+    app: tauri::AppHandle,
+) -> Result<FavoriteItem, String> {
     use crate::services::database::get_favorite_by_id_with_limit;
     let mut item = get_favorite_by_id_with_limit(&id, max_length)?
         .ok_or_else(|| format!("收藏项不存在: {}", id))?;
 
     hydrate_favorite_item_for_ui(&mut item);
+    crate::services::asset_scope::allow_files_content(&app, &item.content);
 
     Ok(item)
 }
@@ -150,9 +153,6 @@ pub fn get_favorite_item_by_id_cmd(id: String, max_length: Option<usize>) -> Res
 #[tauri::command]
 pub fn add_quick_text(title: String, content: String, group_name: Option<String>) -> Result<FavoriteItem, String> {
     let result = db_add_favorite(title, content, group_name);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
@@ -166,9 +166,6 @@ pub fn update_quick_text(
     html_content: Option<String>,
 ) -> Result<FavoriteItem, String> {
     let result = db_update_favorite(id, title, content, group_name, html_content);
-    if result.is_ok() {
-        notify_lan_change("favorites");
-    }
     result
 }
 
@@ -259,10 +256,4 @@ fn favorite_to_clipboard_item(id: &str) -> Result<crate::services::database::Cli
         created_at: favorite.created_at,
         updated_at: favorite.updated_at,
     })
-}
-
-fn notify_lan_change(reason: &'static str) {
-    if let Some(app) = crate::services::clipboard::get_app_handle() {
-        crate::services::sync_transfer::lan_notify_local_change(app, reason);
-    }
 }

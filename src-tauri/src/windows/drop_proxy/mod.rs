@@ -258,14 +258,6 @@ pub fn hide_drop_proxy(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn dispose_drop_proxy(app: &AppHandle) -> Result<(), String> {
-    let _ = set_target_label(None);
-    if let Some(window) = app.get_webview_window(DROP_PROXY_LABEL) {
-        let _ = window.close();
-    }
-    Ok(())
-}
-
 pub fn route_paths_at_cursor(
     app: &AppHandle,
     source_label: &str,
@@ -361,45 +353,8 @@ fn save_drop_resource_blocking(filename: &str, data: &[u8]) -> Result<DropProxyR
     })
 }
 
-fn save_drop_url_blocking(filename: &str, url: &str) -> Result<DropProxyResourcePayload, String> {
-    let url = url.trim();
-    if url.is_empty() {
-        return Err("拖放 URL 为空".to_string());
-    }
-
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|error| format!("解析拖放 URL 失败: {}", error))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        _ => return Err("仅支持 http 或 https 拖放 URL".to_string()),
-    }
-    let url_path = parsed.path().to_string();
-
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|error| format!("创建拖放 URL 下载客户端失败: {}", error))?;
-
-    let response = client
-        .get(parsed)
-        .send()
-        .map_err(|error| format!("下载拖放 URL 失败: {}", error))?;
-
-    if !response.status().is_success() {
-        return Err(format!("下载拖放 URL 失败: HTTP {}", response.status()));
-    }
-
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-    let bytes = response
-        .bytes()
-        .map_err(|error| format!("读取拖放 URL 内容失败: {}", error))?;
-    let resolved_filename = resolve_url_filename(filename, &url_path, &content_type);
-    save_drop_resource_blocking(&resolved_filename, bytes.as_ref())
+fn save_drop_url_blocking(_filename: &str, _url: &str) -> Result<DropProxyResourcePayload, String> {
+    Err("离线版不支持拖放 URL 下载".to_string())
 }
 
 fn cleanup_orphan_resources_blocking(min_age: Duration) -> Result<DropProxyCleanupPayload, String> {
@@ -411,12 +366,6 @@ fn cleanup_orphan_resources_blocking(min_age: Duration) -> Result<DropProxyClean
     let target_root = target_dir
         .canonicalize()
         .map_err(|error| format!("读取拖放资源目录失败: {}", error))?;
-    let referenced_paths = crate::windows::transfer_shelf::persisted_file_paths();
-    let referenced = referenced_paths
-        .into_iter()
-        .filter_map(|path| PathBuf::from(path).canonicalize().ok())
-        .filter(|path| path.starts_with(&target_root))
-        .collect::<HashSet<_>>();
 
     let now = SystemTime::now();
     let mut deleted = 0;
@@ -435,7 +384,7 @@ fn cleanup_orphan_resources_blocking(min_age: Duration) -> Result<DropProxyClean
             Ok(value) => value,
             Err(_) => continue,
         };
-        if !path.starts_with(&target_root) || referenced.contains(&path) {
+        if !path.starts_with(&target_root) {
             continue;
         }
 

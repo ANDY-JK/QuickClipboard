@@ -63,11 +63,6 @@ pub struct DeleteImageGroupPayload {
 }
 
 #[tauri::command]
-pub fn il_init() -> Result<(), String> {
-    image_library::init_image_library()
-}
-
-#[tauri::command]
 pub async fn il_save_image(payload: SaveImagePayload) -> Result<image_library::ImageInfo, String> {
     let group = payload.group;
     let filename = payload.filename;
@@ -80,14 +75,28 @@ pub async fn il_save_image(payload: SaveImagePayload) -> Result<image_library::I
     }
 }
 
+// 列表/计数都是全目录 read_dir + 逐项 metadata，放到阻塞线程执行；
+// 分页只减少返回量，不减少扫描量，主线程执行会随图片数量线性变慢。
 #[tauri::command]
-pub fn il_get_image_list(payload: GetImageListPayload) -> Result<image_library::ImageListResult, String> {
-    image_library::get_image_list(&payload.group, payload.offset, payload.limit)
+pub async fn il_get_image_list(
+    payload: GetImageListPayload,
+) -> Result<image_library::ImageListResult, String> {
+    let group = payload.group;
+    let offset = payload.offset;
+    let limit = payload.limit;
+    tauri::async_runtime::spawn_blocking(move || {
+        image_library::get_image_list(&group, offset, limit)
+    })
+    .await
+    .map_err(|e| format!("图片列表任务执行失败: {}", e))?
 }
 
 #[tauri::command]
-pub fn il_get_image_count(payload: GetImageCountPayload) -> Result<usize, String> {
-    image_library::get_image_count(&payload.group)
+pub async fn il_get_image_count(payload: GetImageCountPayload) -> Result<usize, String> {
+    let group = payload.group;
+    tauri::async_runtime::spawn_blocking(move || image_library::get_image_count(&group))
+        .await
+        .map_err(|e| format!("图片计数任务执行失败: {}", e))?
 }
 
 #[tauri::command]
@@ -98,18 +107,6 @@ pub fn il_delete_image(payload: DeleteImagePayload) -> Result<(), String> {
 #[tauri::command]
 pub fn il_rename_image(payload: RenameImagePayload) -> Result<image_library::ImageInfo, String> {
     image_library::rename_image(&payload.group, &payload.old_filename, &payload.new_filename)
-}
-
-#[tauri::command]
-pub fn il_get_images_dir() -> Result<String, String> {
-    let path = image_library::get_images_dir()?;
-    Ok(path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-pub fn il_get_gifs_dir() -> Result<String, String> {
-    let path = image_library::get_gifs_dir()?;
-    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]

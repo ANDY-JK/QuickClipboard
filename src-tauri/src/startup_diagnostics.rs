@@ -223,20 +223,47 @@ fn append_panic_log(
     }
 }
 
+// 数据库恢复事件写入同一诊断文件，明确记录「已备份而非删除」
+pub fn append_database_recovery_log(message: &str) {
+    let Some(path) = panic_log_file_path() else {
+        return;
+    };
+
+    let now_ms = current_time_ms();
+    let entry = format!("[{now_ms}] 数据库恢复: {}\n\n", message);
+
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+
+    if let Ok(mut file) = options.open(path) {
+        let _ = file.write_all(entry.as_bytes());
+    }
+}
+
 fn read_status() -> Option<StartupStatus> {
     let path = status_file_path()?;
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
 
+// 诊断文件跟随应用基础数据目录：便携模式为 exe 同目录的 data，与数据库/设置文件保持一致。
+//
+// 这里刻意只解析“基础目录”，不走全局 SETTINGS：panic hook 可能在上面的设置写锁被持有时触发，
+// 再去读同一把锁会死锁。自定义存储目录属于设置内容，不在启动诊断的跟随范围内（与改动前一致）。
+fn diagnostic_base_dir() -> Option<PathBuf> {
+    let base_dir = crate::services::settings::SettingsStorage::get_data_dir().ok()?;
+    fs::create_dir_all(&base_dir).ok()?;
+    Some(base_dir)
+}
+
 fn status_file_path() -> Option<PathBuf> {
-    let base_dir = dirs::data_local_dir()?.join("quickclipboard");
+    let base_dir = diagnostic_base_dir()?;
     fs::create_dir_all(&base_dir).ok()?;
     Some(base_dir.join("startup-status.json"))
 }
 
 fn panic_log_file_path() -> Option<PathBuf> {
-    let base_dir = dirs::data_local_dir()?.join("quickclipboard");
+    let base_dir = diagnostic_base_dir()?;
     fs::create_dir_all(&base_dir).ok()?;
     Some(base_dir.join("startup-panic.log"))
 }

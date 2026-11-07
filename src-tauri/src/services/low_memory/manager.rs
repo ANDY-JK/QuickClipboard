@@ -13,21 +13,24 @@ use super::state::{
 };
 
 // 需要销毁的 WebView 窗口列表
+// 注意：pin-image-* 贴图窗口不在此列，进入低占用模式时必须保留，
+// 否则用户贴在屏幕上的图片会直接消失。
 const WEBVIEW_LABELS: &[&str] = &[
     "main",
-    "quickpaste", 
+    "quickpaste",
     "context-menu",
     "settings",
     "text-editor",
-    "updater",
+    "preview-window",
+    "input-dialog",
 ];
 
 const AUTO_LOW_MEMORY_WINDOW_LABELS: &[&str] = &[
     "settings",
     "text-editor",
-    "updater",
     "preview-window",
     "context-menu",
+    "input-dialog",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -255,12 +258,8 @@ fn log_auto_low_memory_state(next_state: AutoLowMemoryLogState) {
 
 // 销毁所有 WebView 窗口
 fn destroy_all_webviews(app: &AppHandle) {
-    for (label, window) in app.webview_windows() {
-        if label.starts_with("pin-image-") {
-            let _ = window.destroy();
-        }
-    }
-
+    // 保留 pin-image-* 贴图窗口：它们承载用户固定在屏幕上的图片，
+    // 进入低占用模式后仍需保持可见。
     for label in WEBVIEW_LABELS {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.destroy();

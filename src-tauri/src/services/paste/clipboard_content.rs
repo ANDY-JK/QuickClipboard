@@ -199,12 +199,70 @@ fn set_clipboard_image_file_impl(path: &str) -> Result<(), String> {
         }
     }
 
-    let image = image::open(path).map_err(|e| format!("读取图片失败: {}", e))?;
+    let limits = crate::services::image_limits();
+    let raw_file = std::fs::read(path).map_err(|e| format!("读取图片失败: {}", e))?;
+    let is_png = Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("png"))
+        .unwrap_or(false);
 
-    let mut png_data = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut png_data), ImageFormat::Png)
-        .map_err(|e| format!("编码 PNG 失败: {}", e))?;
+    let mut image = image::load_from_memory(&raw_file)
+        .map_err(|e| format!("解码图片失败: {}", e))?;
+
+    // 先按宽高上限等比缩放
+    let (width, height) = (image.width(), image.height());
+    let (fit_width, fit_height) = crate::services::fit_dimensions(
+        width,
+        height,
+        limits.max_width,
+        limits.max_height,
+    );
+    let resized = (fit_width, fit_height) != (width, height);
+    if resized {
+        image = image.resize_exact(
+            fit_width,
+            fit_height,
+            image::imageops::FilterType::Triangle,
+        );
+    }
+
+    // 已经是 PNG 且未缩放时直接复用原始字节，跳过 PNG 重编码
+    let mut png_data = if is_png && !resized {
+        raw_file
+    } else {
+        let mut data = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut data), ImageFormat::Png)
+            .map_err(|e| format!("编码 PNG 失败: {}", e))?;
+        data
+    };
+
+    // 文件大小超过上限时，按面积比例缩小一次并重新编码
+    if let Some((shrink_width, shrink_height)) = crate::services::shrink_dimensions_for_bytes(
+        image.width(),
+        image.height(),
+        png_data.len() as u64,
+        limits.max_size_bytes,
+    ) {
+        image = image.resize_exact(
+            shrink_width,
+            shrink_height,
+            image::imageops::FilterType::Triangle,
+        );
+        let mut data = Vec::new();
+        image
+            .write_to(&mut Cursor::new(&mut data), ImageFormat::Png)
+            .map_err(|e| format!("编码 PNG 失败: {}", e))?;
+        png_data = data;
+    }
+
+    if limits.max_size_bytes > 0 && png_data.len() as u64 > limits.max_size_bytes {
+        return Err(format!(
+            "图片超过大小上限（{}MB），无法粘贴",
+            limits.max_size_bytes / (1024 * 1024)
+        ));
+    }
 
     let dib_data = build_dib_data(&image)?;
     let hdrop_data = build_hdrop_data(path);
@@ -245,6 +303,13 @@ fn build_dib_data(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
         .checked_mul(height)
         .and_then(|value| value.checked_mul(4))
         .ok_or_else(|| "图片尺寸过大，无法生成 DIB 数据".to_string())? as usize;
+
+    // 直接接管 RGBA 缓冲并原地交换 R/B 通道，避免逐像素 push 扩容和额外一次拷贝
+    let mut pixel_bytes = rgba.into_raw();
+    for pixel in pixel_bytes.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+
     let mut data = Vec::with_capacity(40 + pixel_data_size);
 
     data.extend_from_slice(&40u32.to_le_bytes());
@@ -259,12 +324,7 @@ fn build_dib_data(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
     data.extend_from_slice(&0u32.to_le_bytes());
     data.extend_from_slice(&0u32.to_le_bytes());
 
-    for pixel in rgba.pixels() {
-        data.push(pixel[2]);
-        data.push(pixel[1]);
-        data.push(pixel[0]);
-        data.push(pixel[3]);
-    }
+    data.extend_from_slice(&pixel_bytes);
 
     Ok(data)
 }

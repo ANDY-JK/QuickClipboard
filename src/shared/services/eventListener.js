@@ -5,6 +5,7 @@ import { loadGroups, groupsStore } from '@shared/store/groupsStore'
 import { navigationStore } from '@shared/store/navigationStore'
 
 let unlisteners = []
+let mainWindowHidden = false
 
 function shiftNavigationIndex(tab, insertIndex) {
   if (
@@ -60,6 +61,16 @@ function shouldRefreshFavorites(payload) {
 
 async function handleClipboardUpdated(payload) {
   try {
+    // 主窗口隐藏时不做整段刷新（清空 items + 重新拉取），只同步计数，
+    // 等窗口显示后再由列表触发的 refresh 补齐数据，避免后台期间的无效负载。
+    if (mainWindowHidden) {
+      if (Number.isInteger(payload?.total_count)) {
+        clipboardStore.totalCount = payload.total_count
+      }
+      clipboardStore.pendingRefresh = true
+      return
+    }
+
     if (shouldRefreshClipboard(payload)) {
       await refreshClipboardHistory()
       return
@@ -143,16 +154,31 @@ export async function setupClipboardEventListener() {
     })
     unlisteners.push(unlisten2)
 
-    const unlisten3 = await listen('refreshQuickTexts', () => {
-      refreshFavorites(groupsStore.currentGroup).catch(() => {})
-    })
-    unlisteners.push(unlisten3)
-
     const unlisten4 = await listen('main-window-refresh-needed', (event) => {
       const payload = event.payload || {}
       handleMainWindowRefreshNeeded(payload).catch(() => {})
     })
     unlisteners.push(unlisten4)
+
+    const unlistenHide = await listen('window-hide-animation', () => {
+      mainWindowHidden = true
+    })
+    unlisteners.push(unlistenHide)
+
+    const unlistenEdgeHide = await listen('edge-snap-hide', () => {
+      mainWindowHidden = true
+    })
+    unlisteners.push(unlistenEdgeHide)
+
+    const unlistenShow = await listen('window-show-animation', () => {
+      mainWindowHidden = false
+    })
+    unlisteners.push(unlistenShow)
+
+    const unlistenEdgeShow = await listen('edge-snap-show', () => {
+      mainWindowHidden = false
+    })
+    unlisteners.push(unlistenEdgeShow)
   } catch (error) {
     console.error('设置事件监听失败:', error)
   }

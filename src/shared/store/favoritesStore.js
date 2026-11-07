@@ -6,6 +6,11 @@ import {
   deleteFavorite as apiDeleteFavorite,
   pasteFavorite as apiPasteFavorite
 } from '@shared/api/favorites'
+import {
+  createMaintenanceRetryScheduler,
+  isDatabaseMaintenanceError,
+  retryOnDatabaseMaintenance
+} from '@shared/utils/databaseMaintenance'
 
 listen('favorite-paste-count-updated', (event) => {
   const id = event.payload
@@ -22,6 +27,26 @@ const CACHE_WINDOW_SIZE = 120
 const CACHE_BUFFER = 40
 let favoritesRequestVersion = 0
 let favoritesActiveGroupName = '全部'
+
+// 数据库维护窗口结束后的有界补刷，与剪贴板共用同一套退避策略。
+// 补刷始终按「当前分组」重新初始化，切组后旧请求会因版本号失效而自然丢弃。
+const favoritesMaintenanceRetry = createMaintenanceRetryScheduler({
+  run: async () => {
+    const { groupsStore } = await import('./groupsStore')
+    await initFavorites(groupsStore.currentGroup)
+  },
+  shouldDefer: () => favoritesStore.loading,
+  onAttempt: (attempt) => {
+    console.info(`数据库维护中，第 ${attempt} 次自动刷新收藏列表`)
+  },
+})
+let favoritesMaintenancePending = false
+
+// 供列表组件卸载时调用，避免定时器在窗口销毁后继续触发后台请求。
+export function cancelFavoritesMaintenanceRetry() {
+  favoritesMaintenancePending = false
+  favoritesMaintenanceRetry.cancel()
+}
 
 function normalizeFavoritesGroupName(groupName) {
   return groupName || '全部'
@@ -440,14 +465,14 @@ export async function loadFavoritesRange(startIndex, endIndex, groupName = null,
   
   try {
     const limit = endIndex - startIndex + 1
-    const result = await getFavoritesHistory({
+    const result = await retryOnDatabaseMaintenance(() => getFavoritesHistory({
       offset: startIndex,
       limit,
       groupName: requestGroupName,
       contentType: requestContentType !== 'all' ? requestContentType : undefined,
       pasteStatus: requestPasteStatus,
       search: requestFilter || undefined
-    })
+    }))
 
     if (!isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
       return
@@ -462,8 +487,15 @@ export async function loadFavoritesRange(startIndex, endIndex, groupName = null,
     }
   } catch (err) {
     if (isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
-      console.error(`加载范围 ${startIndex}-${endIndex} 失败:`, err)
-      favoritesStore.error = err.message || '加载失败'
+      if (isDatabaseMaintenanceError(err)) {
+        // 压缩数据库期间锁库：保持现有列表，安排退避补刷。
+        favoritesMaintenancePending = true
+        favoritesMaintenanceRetry.schedule()
+        console.info('数据库压缩中，稍后刷新收藏列表')
+      } else {
+        console.error(`加载范围 ${startIndex}-${endIndex} 失败:`, err)
+        favoritesStore.error = err.message || '加载失败'
+      }
     }
   } finally {
     if (isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
@@ -487,20 +519,23 @@ export async function initFavorites(groupName = null) {
 
   favoritesStore.loading = true
   favoritesStore.error = null
-  
+  // 每次初始化重新评估维护期状态；completed 只在数据真正落地后置位。
+  favoritesMaintenancePending = false
+  let completed = false
+
   try {
     favoritesStore.items = {}
     favoritesStore.loadingRanges = new Set()
     
     if (requestContentType !== 'all' || requestFilter || requestPasteStatus !== 'all') {
-      const result = await getFavoritesHistory({
+      const result = await retryOnDatabaseMaintenance(() => getFavoritesHistory({
         offset: 0,
         limit: 50,
         groupName: requestGroupName,
         contentType: requestContentType !== 'all' ? requestContentType : undefined,
         pasteStatus: requestPasteStatus,
         search: requestFilter || undefined
-      })
+      }))
 
       if (!isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
         return
@@ -509,7 +544,7 @@ export async function initFavorites(groupName = null) {
       favoritesStore.totalCount = result.total_count
       favoritesStore.setItemsInRange(0, result.items)
     } else {
-      const totalCount = await getFavoritesTotalCount(requestGroupName)
+      const totalCount = await retryOnDatabaseMaintenance(() => getFavoritesTotalCount(requestGroupName))
 
       if (!isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
         return
@@ -528,14 +563,26 @@ export async function initFavorites(groupName = null) {
         })
       }
     }
+    completed = true
   } catch (err) {
     if (isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
-      console.error('初始化收藏列表失败:', err)
-      favoritesStore.error = err.message || '加载失败'
+      if (isDatabaseMaintenanceError(err)) {
+        // 压缩数据库期间锁库：保持现有列表，安排退避补刷。
+        favoritesMaintenancePending = true
+        favoritesMaintenanceRetry.schedule()
+        console.info('数据库压缩中，稍后刷新收藏列表')
+      } else {
+        console.error('初始化收藏列表失败:', err)
+        favoritesStore.error = err.message || '加载失败'
+      }
     }
   } finally {
     if (isFavoritesRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus, requestGroupName)) {
       favoritesStore.loading = false
+      // 数据完整落地且期间未再命中维护错误时，停止后续补刷。
+      if (completed && !favoritesMaintenancePending) {
+        favoritesMaintenanceRetry.cancel()
+      }
     }
   }
 }

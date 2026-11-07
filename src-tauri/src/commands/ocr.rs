@@ -27,21 +27,6 @@ pub struct OcrResult {
     pub lines: Vec<OcrLine>,
 }
 
-// OCR识别图片字节数组
-#[tauri::command]
-pub async fn recognize_image_ocr(image_data: Vec<u8>) -> Result<OcrResult, String> {
-    tokio::task::spawn_blocking(move || {
-        use qcocr::recognize_from_bytes;
-        
-        let result = recognize_from_bytes(&image_data, None)
-            .map_err(|e| format!("OCR识别失败: {}", e))?;
-        
-        convert_ocr_result(result)
-    })
-    .await
-    .map_err(|e| format!("任务执行失败: {}", e))?
-}
-
 // OCR识别图片文件
 #[tauri::command]
 pub async fn recognize_file_ocr(file_path: String, language: Option<String>) -> Result<OcrResult, String> {

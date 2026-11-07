@@ -75,23 +75,6 @@ fn ensure_default_group_dir(root: &Path) -> Result<PathBuf, String> {
     Ok(default_dir)
 }
 
-// 兼容旧调用：现在返回默认分组目录，不再代表“图片”分类。
-pub fn get_images_dir() -> Result<PathBuf, String> {
-    ensure_initialized()?;
-    Ok(get_image_library_dir()?.join(DEFAULT_GROUP_NAME))
-}
-
-// 兼容旧调用：GIF 不再单独分流，返回图库根目录。
-pub fn get_gifs_dir() -> Result<PathBuf, String> {
-    ensure_initialized()?;
-    get_image_library_dir()
-}
-
-// 初始化图片库目录结构
-pub fn init_image_library() -> Result<(), String> {
-    ensure_initialized()
-}
-
 fn ensure_initialized() -> Result<(), String> {
     let root = get_image_library_dir()?;
     if !root.exists() {

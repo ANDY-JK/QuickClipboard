@@ -4,6 +4,8 @@ import { clipboardStore } from '@shared/store/clipboardStore';
 import { favoritesStore } from '@shared/store/favoritesStore';
 import { TextContent, ImageContent, FileContent, HtmlContent } from '@windows/main/components/ClipboardContent';
 import { getPrimaryType, hasType } from '@shared/utils/contentType';
+import { getFilesCount } from '@shared/utils/filesContent';
+import { createLruCache } from '@shared/utils/lruCache';
 import {
   DISPLAY_FORMAT_TEXT,
   DISPLAY_FORMAT_HTML,
@@ -59,14 +61,65 @@ function resolveRenderType(contentType, activeFilterType) {
   return primaryType;
 }
 
-// 剪贴板和收藏项的共同逻辑
-export function useItemCommon(item, options = {}) {
-  const settings = useSnapshot(settingsStore);
-  const clipSnap = useSnapshot(clipboardStore);
-  const favSnap = useSnapshot(favoritesStore);
+const TIME_FORMAT_CACHE_MAX_ENTRIES = 500;
+const timeFormatCache = createLruCache({ maxEntries: TIME_FORMAT_CACHE_MAX_ENTRIES });
+
+function getLocalDayStamp(now) {
+  return `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+}
+
+// 时间格式化与文件数量解析在每行渲染时都会执行，这里统一做有界缓存。
+function formatItemTime(item, contentType) {
+  const timestamp = item.created_at || item.timestamp;
+  if (!timestamp) return '';
+
+  const now = new Date();
+  const primaryType = getPrimaryType(contentType);
+  const fileCount = primaryType === 'file'
+    ? getFilesCount(item.content, item.id)
+    : 0;
+  const cacheKey = `${timestamp}:${getLocalDayStamp(now)}:${primaryType}:${fileCount}`;
+
+  const cached = timeFormatCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const date = new Date(timestamp * 1000);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const oneWeekAgo = new Date(today);
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+  const recordDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const timeFormat = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  let timeStr = '';
+
+  if (recordDate.getTime() === today.getTime()) {
+    timeStr = `今天 ${timeFormat}`;
+  } else if (recordDate.getTime() === yesterday.getTime()) {
+    timeStr = `昨天 ${timeFormat}`;
+  } else if (recordDate >= oneWeekAgo) {
+    const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    timeStr = `${days[date.getDay()]} ${timeFormat}`;
+  } else {
+    timeStr = `${date.getMonth() + 1}/${date.getDate()} ${timeFormat}`;
+  }
+
+  if (fileCount > 0) {
+    timeStr += ` • ${fileCount} 个文件`;
+  }
+
+  timeFormatCache.set(cacheKey, timeStr);
+  return timeStr;
+}
+
+// 剪贴板和收藏项的共同逻辑（纯函数：settings 由调用方下发，避免每行订阅 settingsStore）
+export function getItemCommon(item, settings, options = {}) {
   const rowConfig = ROW_HEIGHT_CONFIG[settings.rowHeight] || ROW_HEIGHT_CONFIG.medium;
 
-  const searchKeyword = options.searchKeyword ?? ((options.isFavorite ? favSnap.filter : clipSnap.filter) || '');
+  const searchKeyword = options.searchKeyword ?? '';
 
   // 获取固定行高
   const getHeightClass = () => rowConfig.itemClass;
@@ -81,59 +134,11 @@ export function useItemCommon(item, options = {}) {
 
   // 获取内容类型
   const contentType = item.content_type || item.type || 'text';
-  const activeFilterType = options.activeFilterType ?? ((options.isFavorite ? favSnap.contentType : clipSnap.contentType) || 'all');
+  const activeFilterType = options.activeFilterType ?? 'all';
   const renderType = resolveRenderType(contentType, activeFilterType);
 
-  // 格式化时间
-  const formatTime = () => {
-    const timestamp = item.created_at || item.timestamp;
-    if (!timestamp) return '';
-    const date = new Date(timestamp * 1000);
-    const now = new Date();
-
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const oneWeekAgo = new Date(today);
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    const recordDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-
-    const timeFormat = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-    let timeStr = '';
-
-    // 今天
-    if (recordDate.getTime() === today.getTime()) {
-      timeStr = `今天 ${timeFormat}`;
-    }
-    // 昨天
-    else if (recordDate.getTime() === yesterday.getTime()) {
-      timeStr = `昨天 ${timeFormat}`;
-    }
-    // 一周内
-    else if (recordDate >= oneWeekAgo) {
-      const days = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-      timeStr = `${days[date.getDay()]} ${timeFormat}`;
-    }
-    // 更早的日期
-    else {
-      timeStr = `${date.getMonth() + 1}/${date.getDate()} ${timeFormat}`;
-    }
-
-    // 如果是文件类型，添加文件数量
-    if (getPrimaryType(contentType) === 'file') {
-      try {
-        if (item.content?.startsWith('files:')) {
-          const filesData = JSON.parse(item.content.substring(6));
-          const fileCount = filesData.files?.length || 0;
-          timeStr += ` • ${fileCount} 个文件`;
-        }
-      } catch (e) {
-        // 解析失败，只显示时间
-      }
-    }
-    return timeStr;
-  };
+  // 格式化时间（有界缓存）
+  const formatTime = () => formatItemTime(item, contentType);
 
   // 渲染内容组件
   const renderContent = (compact = false, hasTitle = false, layout = {}) => {
@@ -157,12 +162,12 @@ export function useItemCommon(item, options = {}) {
 
     // 图片类型
     if (primaryType === 'image') {
-      return <ImageContent item={item} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
+      return <ImageContent item={item} settings={settings} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
     }
 
     // 文件类型
     if (primaryType === 'file') {
-      return <FileContent item={item} compact={compact} searchKeyword={searchKeyword} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
+      return <FileContent item={item} settings={settings} compact={compact} searchKeyword={searchKeyword} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
     }
 
     const displayFormat = searchKeyword
@@ -170,7 +175,7 @@ export function useItemCommon(item, options = {}) {
       : resolveDisplayFormatByPriority(item, settings.displayPriorityOrder);
 
     if (displayFormat === DISPLAY_FORMAT_IMAGE) {
-      return <ImageContent item={item} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
+      return <ImageContent item={item} settings={settings} maxContentHeightPx={autoRowMaxContentHeightPx} disableExternalDrag={disableExternalDrag} disableExternalTooltip={disableExternalTooltip} />;
     }
 
     if (displayFormat === DISPLAY_FORMAT_HTML && item.html_content) {
@@ -189,4 +194,17 @@ export function useItemCommon(item, options = {}) {
     renderContent,
     searchKeyword
   };
+}
+
+// 收藏列表仍按行使用；剪贴板列表改为在列表层订阅 settings 后调用 getItemCommon。
+export function useItemCommon(item, options = {}) {
+  const settings = useSnapshot(settingsStore);
+  const clipSnap = useSnapshot(clipboardStore);
+  const favSnap = useSnapshot(favoritesStore);
+
+  return getItemCommon(item, settings, {
+    ...options,
+    searchKeyword: options.searchKeyword ?? ((options.isFavorite ? favSnap.filter : clipSnap.filter) || ''),
+    activeFilterType: options.activeFilterType ?? ((options.isFavorite ? favSnap.contentType : clipSnap.contentType) || 'all'),
+  });
 }

@@ -1,25 +1,43 @@
 use super::models::{ClipboardDataItem, ClipboardDataSeed, ClipboardItem, PaginatedResult, QueryParams};
-use super::connection::{with_connection, MAX_CONTENT_LENGTH};
-use crate::services::webdav_sync::types::{CloudRecord, CloudRecordMeta};
+use super::connection::{maybe_shrink_after_bulk_delete, with_connection, MAX_CONTENT_LENGTH};
 use crate::utils::{is_textual_content_type, truncate_string, truncate_around_keyword, truncate_html};
 use rusqlite::{params, OptionalExtension};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use chrono;
 use uuid::Uuid;
 
-// 计算文本字符数
-fn calculate_char_count(content: &str, content_type: &str) -> Option<i64> {
-    if content_type.contains("text") || content_type.contains("rich_text") {
-        let count = content.chars().count() as i64;
-        if count > 0 {
-            Some(count)
-        } else {
-            None
+// 大体积文件/图片列表返回前剥离 base64 图标，避免数十 MB 走 IPC
+const MAX_INLINE_FILE_ICON_JSON: usize = 64 * 1024;
+
+fn strip_file_icons_if_large(content: String, content_type: &str) -> String {
+    if content.len() <= MAX_INLINE_FILE_ICON_JSON
+        || !(content_type.contains("file") || content_type.contains("image"))
+    {
+        return content;
+    }
+    let json = match content.strip_prefix("files:") {
+        Some(json) => json,
+        None => return content,
+    };
+    let mut data = match serde_json::from_str::<crate::services::paste::FilesData>(json) {
+        Ok(data) => data,
+        Err(_) => return content,
+    };
+    let mut changed = false;
+    for file in &mut data.files {
+        if file.icon_data.take().is_some() {
+            changed = true;
         }
-    } else {
-        None
+    }
+    if !changed {
+        return content;
+    }
+    match serde_json::to_string(&data) {
+        Ok(serialized) => format!("files:{}", serialized),
+        Err(_) => content,
     }
 }
+
 
 pub fn save_clipboard_data_items(
     target_kind: &str,
@@ -113,29 +131,17 @@ pub fn delete_clipboard_data_items(target_kind: &str, target_id: &str) -> Result
     })
 }
 
-pub fn delete_clipboard_data_items_by_kind(target_kind: &str) -> Result<(), String> {
-    with_connection(|conn| {
-        conn.execute(
-            "DELETE FROM clipboard_data WHERE target_kind = ?1",
-            params![target_kind],
-        )?;
-        Ok(())
-    })
-}
-
-// 异步更新缺失的字符数
-pub fn update_missing_char_counts(items: Vec<(i64, String, String)>) {
-    if items.is_empty() { return; }
+// 异步更新缺失的字符数（直接按 SQL 计算，无需把全文读入内存）
+pub fn update_missing_char_counts(ids: Vec<i64>) {
+    if ids.is_empty() { return; }
     
     std::thread::spawn(move || {
         let _ = with_connection(|conn| {
-            for (id, content, content_type) in items {
-                if let Some(char_count) = calculate_char_count(&content, &content_type) {
-                    conn.execute(
-                        "UPDATE clipboard SET char_count = ?1 WHERE id = ?2",
-                        params![char_count, id],
-                    )?;
-                }
+            for id in ids {
+                conn.execute(
+                    "UPDATE clipboard SET char_count = length(content) WHERE id = ?1 AND char_count IS NULL",
+                    params![id],
+                )?;
             }
             Ok(())
         });
@@ -149,6 +155,87 @@ fn split_image_ids(s: &str) -> Vec<String> {
         .filter(|x| !x.is_empty())
         .map(|x| x.to_string())
         .collect()
+}
+
+// 计算用于精确去重的 content_hash（写入路径与历史回填共用，保证两侧口径一致）
+// 文本: 对 content 全文做 SHA256；文件/图片: 对排序后的文件路径集合做 SHA256。
+pub fn compute_content_hash(content: &str, content_type: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let is_text = content_type.starts_with("text")
+        || content_type.contains("rich_text")
+        || content_type.contains("link");
+    let is_file = !is_text && (content_type.contains("image") || content_type.contains("file"));
+
+    if !is_text && !is_file {
+        // 不可去重类型：写空串哨兵（非 NULL，保证回填迁移能推进；也不会与有效哈希匹配）
+        return String::new();
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(if is_text { b"text\0" } else { b"file\0" });
+
+    if is_file {
+        for path in extract_file_paths_from_content(content) {
+            hasher.update(path.as_bytes());
+            hasher.update([0u8]);
+        }
+    } else {
+        hasher.update(content.as_bytes());
+    }
+
+    format!("{:x}", hasher.finalize())
+}
+
+// 从 files: JSON 提取并排序文件路径；解析失败时退化为整段内容
+fn extract_file_paths_from_content(content: &str) -> Vec<String> {
+    if let Some(json) = content.strip_prefix("files:") {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+            let mut paths: Vec<String> = value["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|file| file["path"].as_str().map(String::from))
+                .collect();
+            paths.sort();
+            return paths;
+        }
+    }
+    vec![content.to_string()]
+}
+
+// 一次性收集候选图片 ID 中仍被 clipboard/favorites 引用的部分
+// （替代逐 ID、每 ID 8 次 LIKE 的引用判定）
+pub(crate) fn collect_unreferenced_image_ids(
+    conn: &rusqlite::Connection,
+    candidates: HashSet<String>,
+) -> Result<Vec<String>, rusqlite::Error> {
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut referenced: HashSet<String> = HashSet::new();
+
+    for table in ["clipboard", "favorites"] {
+        let sql = format!(
+            "SELECT image_id FROM {} WHERE image_id IS NOT NULL AND image_id <> ''",
+            table
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for row in rows {
+            for image_id in split_image_ids(&row?) {
+                if candidates.contains(&image_id) {
+                    referenced.insert(image_id);
+                }
+            }
+        }
+    }
+
+    Ok(candidates
+        .into_iter()
+        .filter(|image_id| !referenced.contains(image_id))
+        .collect())
 }
 
 // 检查图片ID是否仍被 clipboard 或 favorites 引用
@@ -192,12 +279,12 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
         || params.paste_status.as_ref().map(|s| s.split(',').any(|v| v.trim() == "pasted" || v.trim() == "unpasted")).unwrap_or(false);
     
     with_connection(|conn| {
-        let mut where_clauses = vec![];
+        let mut where_clauses: Vec<String> = vec![];
         let mut query_params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
         
         if let Some(ref search) = search_keyword {
             if !search.trim().is_empty() {
-                where_clauses.push("content LIKE ?");
+                where_clauses.push("content LIKE ?".to_string());
                 let search_pattern = format!("%{}%", search);
                 query_params.push(Box::new(search_pattern));
             }
@@ -207,7 +294,7 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
             let types: Vec<_> = content_type.split(',').map(str::trim).filter(|t| !t.is_empty()).collect();
             if !types.is_empty() && content_type != "all" {
                 let clauses = types.iter().map(|_| "content_type LIKE ?").collect::<Vec<_>>().join(" OR ");
-                where_clauses.push(Box::leak(format!("({})", clauses).into_boxed_str()));
+                where_clauses.push(format!("({})", clauses));
                 for content_type in types {
                     let pattern = if content_type == "text" { "%text%".to_string() } else { format!("%{}%", content_type) };
                     query_params.push(Box::new(pattern));
@@ -217,7 +304,7 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
         if let Some(ref paste_status) = params.paste_status {
             let statuses: Vec<_> = paste_status.split(',').map(str::trim).filter(|status| *status == "pasted" || *status == "unpasted").collect();
             if statuses.len() == 1 {
-                where_clauses.push(if statuses[0] == "pasted" { "paste_count > 0" } else { "paste_count = 0" });
+                where_clauses.push(if statuses[0] == "pasted" { "paste_count > 0".to_string() } else { "paste_count = 0".to_string() });
             }
         }
         
@@ -251,14 +338,26 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
             return Ok(PaginatedResult::new(0, vec![], params.offset, params.limit));
         }
         
+        let has_keyword_search = search_keyword
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        // 无关键词时把文本截断下推到 SQL，避免把整段历史内容读入内存
+        let content_expr = if has_keyword_search {
+            "content"
+        } else {
+            "CASE WHEN content_type LIKE '%text%' OR content_type LIKE '%link%' THEN substr(content, 1, 1600) ELSE content END"
+        };
         let query_sql = format!(
-            "SELECT id, uuid, source_device_id, is_remote, content, html_content, content_type, image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash, created_at, updated_at, char_count,
-                    (SELECT id FROM favorites WHERE source_clipboard_uuid = clipboard.uuid LIMIT 1) AS favorite_id
+            "SELECT id, uuid, source_device_id, is_remote, {}, html_content, content_type, image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash, created_at, updated_at, char_count,
+                    (SELECT id FROM favorites WHERE source_clipboard_uuid = clipboard.uuid LIMIT 1) AS favorite_id,
+                    char_count IS NULL AS char_count_missing,
+                    length(content) AS content_char_len
              FROM clipboard 
              {} 
              ORDER BY is_pinned DESC, item_order DESC, updated_at DESC 
              LIMIT ? OFFSET ?",
-            where_clause
+            content_expr, where_clause
         );
         
         query_params.push(Box::new(params.limit));
@@ -266,7 +365,7 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
         
         let mut stmt = conn.prepare(&query_sql)?;
 
-        let mut items_to_update: Vec<(i64, String, String)> = vec![];
+        let mut ids_to_update: Vec<i64> = vec![];
         
         let items = stmt.query_map(
             rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())),
@@ -279,20 +378,39 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
                 let html_content: Option<String> = row.get(5)?;
                 let content_type: String = row.get(6)?;
                 let char_count: Option<i64> = row.get(15)?;
+                let char_count_missing: i64 = row.get(17)?;
+                let content_char_len: i64 = row.get(18)?;
                 
+                let needs_char_count = content_type.contains("text") || content_type.contains("rich_text");
+                let missing_char_count = char_count_missing != 0 && needs_char_count && content_char_len > 0;
+                let final_char_count = if missing_char_count {
+                    Some(content_char_len)
+                } else {
+                    char_count
+                };
+                // 缺失字符数由 SQL 直接按 id 回填，无需把全文留在内存里
+                let id_for_update = if missing_char_count { Some(id) } else { None };
+
                 let (truncated_content, truncated_html) = if is_textual_content_type(&content_type) {
-                    let truncated_content = if content.len() > MAX_CONTENT_LENGTH {
-                        if let Some(ref keyword) = search_keyword {
-                            if !keyword.trim().is_empty() {
-                                truncate_around_keyword(content.clone(), keyword, MAX_CONTENT_LENGTH)
+                    let truncated_content = if has_keyword_search {
+                        if content.len() > MAX_CONTENT_LENGTH {
+                            if let Some(ref keyword) = search_keyword {
+                                if !keyword.trim().is_empty() {
+                                    truncate_around_keyword(content, keyword, MAX_CONTENT_LENGTH)
+                                } else {
+                                    truncate_string(content, MAX_CONTENT_LENGTH)
+                                }
                             } else {
-                                truncate_string(content.clone(), MAX_CONTENT_LENGTH)
+                                truncate_string(content, MAX_CONTENT_LENGTH)
                             }
                         } else {
-                            truncate_string(content.clone(), MAX_CONTENT_LENGTH)
+                            content
                         }
+                    } else if content_char_len as usize > MAX_CONTENT_LENGTH {
+                        // 内容已由 SQL 截到 1600 字符，这里只补上原有提示后缀
+                        format!("{}...(内容过长已截断)", content)
                     } else {
-                        content.clone()
+                        content
                     };
                     
                     let truncated_html = html_content.map(|h| {
@@ -305,14 +423,7 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
                     
                     (truncated_content, truncated_html)
                 } else {
-                    (content.clone(), html_content)
-                };
-
-                let needs_char_count = content_type.contains("text") || content_type.contains("rich_text");
-                let final_char_count = if char_count.is_none() && needs_char_count && !content.is_empty() {
-                    Some(content.chars().count() as i64)
-                } else {
-                    char_count
+                    (strip_file_icons_if_large(content, &content_type), html_content)
                 };
                 
                 Ok((ClipboardItem {
@@ -333,374 +444,26 @@ pub fn query_clipboard_items(params: QueryParams) -> Result<PaginatedResult<Clip
                     char_count: final_char_count,
                     created_at: row.get(13)?,
                     updated_at: row.get(14)?,
-                }, char_count.is_none() && needs_char_count, id, content, content_type))
+                }, id_for_update))
             }
         )?
         .collect::<Result<Vec<_>, _>>()?;
         
         let mut result_items = vec![];
-        for (item, needs_update, id, content, content_type) in items {
-            if needs_update {
-                items_to_update.push((id, content, content_type));
+        for (item, id_to_update) in items {
+            if let Some(id) = id_to_update {
+                ids_to_update.push(id);
             }
             result_items.push(item);
         }
 
-        if !items_to_update.is_empty() {
-            update_missing_char_counts(items_to_update);
+        if !ids_to_update.is_empty() {
+            update_missing_char_counts(ids_to_update);
         }
         
         Ok(PaginatedResult::new(total_count, result_items, params.offset, params.limit))
     })
 }
-
-pub fn webdav_list_history_records(device_id: &str) -> Result<Vec<CloudRecord>, String> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, uuid, source_device_id, is_remote, content, html_content, content_type,
-                    image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash,
-                    char_count, created_at, updated_at
-             FROM clipboard
-             ORDER BY item_order DESC, updated_at DESC, id DESC",
-        )?;
-
-        let rows = stmt.query_map([], |row| {
-            let id: i64 = row.get(0)?;
-            let uuid_opt: Option<String> = row.get(1)?;
-            let uuid = uuid_opt.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| id.to_string());
-            let source_device_id = row
-                .get::<_, Option<String>>(2)?
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| device_id.to_string());
-
-            Ok(CloudRecord {
-                uuid,
-                source_device_id,
-                is_remote: row.get::<_, i64>(3)? != 0,
-                content: row.get(4)?,
-                html_content: row.get(5)?,
-                content_type: row.get(6)?,
-                image_id: row.get(7)?,
-                item_order: row.get(8)?,
-                paste_count: row.get(10)?,
-                source_app: row.get(11)?,
-                source_icon_hash: row.get(12)?,
-                char_count: row.get(13)?,
-                title: String::new(),
-                group_name: "全部".to_string(),
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-            })
-        })?;
-
-        Ok(rows.filter_map(|row| row.ok()).collect())
-    })
-}
-
-pub fn webdav_list_history_record_metas() -> Result<Vec<CloudRecordMeta>, String> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, uuid, updated_at, image_id
-             FROM clipboard
-             ORDER BY item_order DESC, updated_at DESC, id DESC",
-        )?;
-
-        let rows = stmt.query_map([], |row| {
-            let id: i64 = row.get(0)?;
-            let uuid_opt: Option<String> = row.get(1)?;
-            let uuid = uuid_opt.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| id.to_string());
-            Ok(CloudRecordMeta {
-                uuid,
-                updated_at: row.get(2)?,
-                image_id: row.get(3)?,
-            })
-        })?;
-
-        Ok(rows.filter_map(|row| row.ok()).collect())
-    })
-}
-
-pub fn webdav_get_history_record_by_uuid(uuid: &str, device_id: &str) -> Result<Option<CloudRecord>, String> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, uuid, source_device_id, is_remote, content, html_content, content_type,
-                    image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash,
-                    char_count, created_at, updated_at
-             FROM clipboard
-             WHERE uuid = ?1 OR ((uuid IS NULL OR uuid = '') AND id = ?2)
-             LIMIT 1",
-        )?;
-        let id = uuid.parse::<i64>().ok();
-        let record = stmt.query_row(params![uuid, id], |row| {
-            let id: i64 = row.get(0)?;
-            let uuid_opt: Option<String> = row.get(1)?;
-            let uuid = uuid_opt.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| id.to_string());
-            let source_device_id = row
-                .get::<_, Option<String>>(2)?
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| device_id.to_string());
-
-            Ok(CloudRecord {
-                uuid,
-                source_device_id,
-                is_remote: row.get::<_, i64>(3)? != 0,
-                content: row.get(4)?,
-                html_content: row.get(5)?,
-                content_type: row.get(6)?,
-                image_id: row.get(7)?,
-                item_order: row.get(8)?,
-                paste_count: row.get(10)?,
-                source_app: row.get(11)?,
-                source_icon_hash: row.get(12)?,
-                char_count: row.get(13)?,
-                title: String::new(),
-                group_name: "全部".to_string(),
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-            })
-        }).optional()?;
-
-        Ok(record)
-    })
-}
-
-pub fn webdav_list_own_history_records(device_id: &str) -> Result<Vec<CloudRecord>, String> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, uuid, source_device_id, is_remote, content, html_content, content_type,
-                    image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash,
-                    char_count, created_at, updated_at
-             FROM clipboard
-             WHERE source_device_id IS NULL OR source_device_id = '' OR source_device_id = ?1
-             ORDER BY item_order DESC, updated_at DESC, id DESC",
-        )?;
-
-        let rows = stmt.query_map(params![device_id], |row| {
-            let id: i64 = row.get(0)?;
-            let uuid_opt: Option<String> = row.get(1)?;
-            let uuid = uuid_opt.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| id.to_string());
-
-            Ok(CloudRecord {
-                uuid,
-                source_device_id: device_id.to_string(),
-                is_remote: row.get::<_, i64>(3)? != 0,
-                content: row.get(4)?,
-                html_content: row.get(5)?,
-                content_type: row.get(6)?,
-                image_id: row.get(7)?,
-                item_order: row.get(8)?,
-                paste_count: row.get(10)?,
-                source_app: row.get(11)?,
-                source_icon_hash: row.get(12)?,
-                char_count: row.get(13)?,
-                title: String::new(),
-                group_name: "全部".to_string(),
-                created_at: row.get(14)?,
-                updated_at: row.get(15)?,
-            })
-        })?;
-
-        Ok(rows.filter_map(|row| row.ok()).collect())
-    })
-}
-
-pub fn webdav_history_record_states() -> Result<HashMap<String, i64>, String> {
-    with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT uuid, updated_at FROM clipboard WHERE uuid IS NOT NULL AND uuid != ''",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
-        let mut states = HashMap::new();
-        for row in rows {
-            let (uuid, updated_at) = row?;
-            states.insert(uuid, updated_at);
-        }
-        Ok(states)
-    })
-}
-
-pub fn lan_upsert_history_records(records: &[CloudRecord]) -> Result<Vec<CloudRecord>, String> {
-    upsert_history_records(records, false)
-}
-
-pub fn webdav_repair_history_records(records: &[CloudRecord]) -> Result<Vec<CloudRecord>, String> {
-    upsert_history_records(records, true)
-}
-
-fn upsert_history_records(records: &[CloudRecord], ignore_tombstones: bool) -> Result<Vec<CloudRecord>, String> {
-    if records.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    with_connection(|conn| {
-        let tx = conn.unchecked_transaction()?;
-        let mut changed = Vec::new();
-
-        for record in records {
-            if record.uuid.trim().is_empty() {
-                continue;
-            }
-            let tombstone_deleted_at = super::tombstones::sync_tombstone_deleted_at_in_conn(
-                &tx,
-                super::tombstones::COLLECTION_HISTORY,
-                &record.uuid,
-            )?;
-            if !ignore_tombstones && tombstone_deleted_at.map(|value| value >= record.updated_at).unwrap_or(false) {
-                continue;
-            }
-            let restored_updated_at = if ignore_tombstones {
-                super::tombstones::restored_record_updated_at(record.updated_at, tombstone_deleted_at)
-            } else {
-                record.updated_at
-            };
-
-            let existing = tx
-                .query_row(
-                    "SELECT COALESCE(source_device_id, ''), updated_at, content, html_content, content_type,
-                            image_id, item_order, paste_count, source_app, source_icon_hash, char_count, created_at
-                     FROM clipboard WHERE uuid = ?1 LIMIT 1",
-                    params![record.uuid],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, i64>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, Option<String>>(3)?,
-                            row.get::<_, String>(4)?,
-                            row.get::<_, Option<String>>(5)?,
-                            row.get::<_, i64>(6)?,
-                            row.get::<_, i64>(7)?,
-                            row.get::<_, Option<String>>(8)?,
-                            row.get::<_, Option<String>>(9)?,
-                            row.get::<_, Option<i64>>(10)?,
-                            row.get::<_, i64>(11)?,
-                        ))
-                    },
-                )
-                .optional()?;
-
-            if let Some((
-                source_device_id,
-                updated_at,
-                content,
-                html_content,
-                content_type,
-                image_id,
-                item_order,
-                paste_count,
-                source_app,
-                source_icon_hash,
-                char_count,
-                created_at,
-            )) = existing {
-                let same = source_device_id == record.source_device_id
-                    && updated_at == restored_updated_at
-                    && content == record.content
-                    && html_content == record.html_content
-                    && content_type == record.content_type
-                    && image_id == record.image_id
-                    && item_order == record.item_order
-                    && paste_count == record.paste_count
-                    && source_app == record.source_app
-                    && source_icon_hash == record.source_icon_hash
-                    && char_count == record.char_count
-                    && created_at == record.created_at;
-
-                if updated_at >= restored_updated_at || same {
-                    if tombstone_deleted_at.map(|deleted_at| deleted_at < updated_at).unwrap_or(false) {
-                        super::tombstones::delete_sync_tombstone_in_conn(
-                            &tx,
-                            super::tombstones::COLLECTION_HISTORY,
-                            &record.uuid,
-                        )?;
-                    }
-                    continue;
-                }
-
-                tx.execute(
-                    "UPDATE clipboard SET
-                        source_device_id = ?1,
-                        is_remote = 1,
-                        content = ?2,
-                        html_content = ?3,
-                        content_type = ?4,
-                        image_id = ?5,
-                        item_order = ?6,
-                        paste_count = ?7,
-                        source_app = ?8,
-                        source_icon_hash = ?9,
-                        char_count = ?10,
-                        created_at = ?11,
-                        updated_at = ?12
-                     WHERE uuid = ?13",
-                    params![
-                        record.source_device_id,
-                        record.content,
-                        record.html_content,
-                        record.content_type,
-                        record.image_id,
-                        record.item_order,
-                        record.paste_count,
-                        record.source_app,
-                        record.source_icon_hash,
-                        record.char_count,
-                        record.created_at,
-                        restored_updated_at,
-                        record.uuid,
-                    ],
-                )?;
-                if tombstone_deleted_at.map(|deleted_at| deleted_at < restored_updated_at).unwrap_or(false) {
-                    super::tombstones::delete_sync_tombstone_in_conn(
-                        &tx,
-                        super::tombstones::COLLECTION_HISTORY,
-                        &record.uuid,
-                    )?;
-                }
-                let mut changed_record = record.clone();
-                changed_record.updated_at = restored_updated_at;
-                changed.push(changed_record);
-                continue;
-            }
-
-            tx.execute(
-                "INSERT INTO clipboard (
-                    uuid, source_device_id, is_remote, content, html_content, content_type,
-                    image_id, item_order, is_pinned, paste_count, source_app, source_icon_hash,
-                    char_count, created_at, updated_at
-                 ) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![
-                    record.uuid,
-                    record.source_device_id,
-                    record.content,
-                    record.html_content,
-                    record.content_type,
-                    record.image_id,
-                    record.item_order,
-                    record.paste_count,
-                    record.source_app,
-                    record.source_icon_hash,
-                    record.char_count,
-                    record.created_at,
-                    restored_updated_at,
-                ],
-            )?;
-            if tombstone_deleted_at.map(|deleted_at| deleted_at < restored_updated_at).unwrap_or(false) {
-                super::tombstones::delete_sync_tombstone_in_conn(
-                    &tx,
-                    super::tombstones::COLLECTION_HISTORY,
-                    &record.uuid,
-                )?;
-            }
-            let mut changed_record = record.clone();
-            changed_record.updated_at = restored_updated_at;
-            changed.push(changed_record);
-        }
-
-        tx.commit()?;
-        Ok(changed)
-    })
-}
-
 
 // 获取剪贴板总数
 pub fn get_clipboard_count() -> Result<i64, String> {
@@ -711,15 +474,29 @@ pub fn get_clipboard_count() -> Result<i64, String> {
 
 pub fn get_clipboard_item_position(id: i64) -> Result<Option<i64>, String> {
     with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM clipboard ORDER BY is_pinned DESC, item_order DESC, updated_at DESC",
+        let target: Option<(i64, i64, i64)> = conn
+            .query_row(
+                "SELECT is_pinned, item_order, updated_at FROM clipboard WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+
+        let Some((is_pinned, item_order, updated_at)) = target else {
+            return Ok(None);
+        };
+
+        // 与列表排序口径一致：is_pinned DESC, item_order DESC, updated_at DESC
+        let position: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM clipboard
+             WHERE is_pinned > ?1
+                OR (is_pinned = ?1 AND item_order > ?2)
+                OR (is_pinned = ?1 AND item_order = ?2 AND updated_at > ?3)",
+            params![is_pinned, item_order, updated_at],
+            |row| row.get(0),
         )?;
 
-        let ids = stmt
-            .query_map([], |row| row.get::<_, i64>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        Ok(ids.iter().position(|item_id| *item_id == id).map(|index| index as i64))
+        Ok(Some(position))
     })
 }
 
@@ -866,81 +643,136 @@ pub fn increment_paste_counts(ids: &[i64]) -> Result<(), String> {
     })
 }
 
+// 批量删除分块大小：每块一个独立短事务，单次持锁时间与块大小成正比
+const DELETE_CHUNK_SIZE: usize = 200;
+
+// 在一个短事务里删除一批剪贴板行（先删原始数据，再删历史记录），返回删除行数与该批行的图片 ID
+fn delete_clipboard_rows_batch(
+    conn: &rusqlite::Connection,
+    ids: &[i64],
+) -> Result<(usize, HashSet<String>), rusqlite::Error> {
+    if ids.is_empty() {
+        return Ok((0, HashSet::new()));
+    }
+
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let mut images: HashSet<String> = HashSet::new();
+    let tx = conn.unchecked_transaction()?;
+
+    {
+        let sql = format!("SELECT image_id FROM clipboard WHERE id IN ({})", placeholders);
+        let mut stmt = tx.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            row.get::<_, Option<String>>(0)
+        })?;
+        for row in rows {
+            if let Some(raw) = row? {
+                for image_id in split_image_ids(&raw) {
+                    images.insert(image_id);
+                }
+            }
+        }
+    }
+
+    let data_sql = format!(
+        "DELETE FROM clipboard_data WHERE target_kind = 'clipboard' AND target_id IN (
+            SELECT CAST(id AS TEXT) FROM clipboard WHERE id IN ({})
+        )",
+        placeholders
+    );
+    tx.execute(&data_sql, rusqlite::params_from_iter(ids.iter()))?;
+
+    let rows_sql = format!("DELETE FROM clipboard WHERE id IN ({})", placeholders);
+    let deleted = tx.execute(&rows_sql, rusqlite::params_from_iter(ids.iter()))?;
+
+    tx.commit()?;
+    Ok((deleted, images))
+}
+
+// 取一批“超出上限、应被删除”的历史项 ID（保留顺序与原逻辑一致：置顶优先，其次序号、更新时间）
+fn select_overflow_ids(
+    conn: &rusqlite::Connection,
+    max_count: u64,
+    limit: usize,
+) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM clipboard
+         ORDER BY is_pinned DESC, item_order DESC, updated_at DESC
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt.query_map(params![limit as i64, max_count], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+// 取一批“清空范围内的历史项 ID”（只作用于快照 id 之前的行，按 id 从小到大推进）
+fn select_clear_ids(
+    conn: &rusqlite::Connection,
+    max_id: i64,
+    limit: usize,
+) -> Result<Vec<i64>, rusqlite::Error> {
+    let mut stmt = conn.prepare("SELECT id FROM clipboard WHERE id <= ?1 ORDER BY id LIMIT ?2")?;
+    let rows = stmt.query_map(params![max_id, limit as i64], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
 // 限制剪贴板历史数量（删除超出限制的旧记录）
+//
+// 删除按 DELETE_CHUNK_SIZE 分块：每块一个短事务、独立持锁，并在块与块之间释放锁，
+// 采集线程插入时最多等一块，而不是等整张表的删除 + 引用检查。
 pub fn limit_clipboard_history(max_count: u64) -> Result<(), String> {
     if max_count >= 999999 {
         return Ok(());
     }
-    
-    let (images_to_delete, deleted_ids): (Vec<String>, Vec<i64>) = with_connection(|conn| {
-        let sql_ids = "SELECT image_id FROM clipboard WHERE id NOT IN (SELECT id FROM clipboard ORDER BY is_pinned DESC, item_order DESC, updated_at DESC LIMIT ?1) AND image_id IS NOT NULL AND image_id <> ''";
-        let mut stmt = conn.prepare(sql_ids)?;
-        let ids_iter = stmt.query_map(params![max_count], |row| row.get::<_, String>(0))?;
-        let mut set: HashSet<String> = HashSet::new();
-        for r in ids_iter {
-            if let Ok(s) = r {
-                for iid in split_image_ids(&s) {
-                    set.insert(iid);
-                }
-            }
-        }
-        drop(stmt);
 
-        let mut delete_ids_stmt = conn.prepare(
-            "SELECT id FROM clipboard WHERE id NOT IN (
-                SELECT id FROM clipboard ORDER BY is_pinned DESC, item_order DESC, updated_at DESC LIMIT ?1
-            )",
-        )?;
-        let deleted_ids = delete_ids_stmt
-            .query_map(params![max_count], |row| row.get::<_, i64>(0))?
-            .filter_map(|r| r.ok())
-            .collect::<Vec<_>>();
-
-        conn.execute(
-            "DELETE FROM clipboard WHERE id NOT IN (
-                SELECT id FROM clipboard ORDER BY is_pinned DESC, item_order DESC, updated_at DESC LIMIT ?1
-            )",
-            params![max_count],
-        )?;
-
-        let mut to_delete = Vec::new();
-        for iid in set.into_iter() {
-            if !is_image_id_referenced(conn, &iid)? {
-                to_delete.push(iid);
-            }
-        }
-        Ok((to_delete, deleted_ids))
+    // 未超限时直接返回，避免每写入一条都做一次删除/引用检查
+    let total: i64 = with_connection(|conn| {
+        conn.query_row("SELECT COUNT(*) FROM clipboard", [], |row| row.get(0))
     })?;
-
-    for id in deleted_ids {
-        let _ = delete_clipboard_data_items("clipboard", &id.to_string());
+    if total <= max_count as i64 {
+        return Ok(());
     }
 
-    delete_image_files(images_to_delete)
+    let mut images_to_delete: HashSet<String> = HashSet::new();
+    let mut deleted_total: usize = 0;
+
+    loop {
+        let (deleted, batch_images) = with_connection(|conn| {
+            let ids = select_overflow_ids(conn, max_count, DELETE_CHUNK_SIZE)?;
+            delete_clipboard_rows_batch(conn, &ids)
+        })?;
+
+        if deleted == 0 {
+            break;
+        }
+        deleted_total += deleted;
+        images_to_delete.extend(batch_images);
+    }
+
+    if deleted_total == 0 {
+        return Ok(());
+    }
+
+    let unreferenced = with_connection(|conn| {
+        maybe_shrink_after_bulk_delete(conn, deleted_total);
+        collect_unreferenced_image_ids(conn, images_to_delete)
+    })?;
+
+    delete_image_files(unreferenced)
 }
 
 // 删除单个剪贴板项
 pub fn delete_clipboard_item(id: i64) -> Result<(), String> {
     let images_to_delete: Vec<String> = with_connection(|conn| {
-        let item: Option<(Option<String>, Option<String>)> = conn
+        let image_ids: Option<Option<String>> = conn
             .query_row(
-                "SELECT image_id, uuid FROM clipboard WHERE id = ?",
+                "SELECT image_id FROM clipboard WHERE id = ?",
                 params![id],
-                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                |row| row.get::<_, Option<String>>(0),
             )
             .optional()?;
-        let Some((image_ids, uuid)) = item else {
+        let Some(image_ids) = image_ids else {
             return Ok(Vec::new());
         };
-        let deleted_at = chrono::Local::now().timestamp();
-        let tombstone_id = uuid.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| id.to_string());
-        super::tombstones::record_sync_tombstone_in_conn(
-            conn,
-            super::tombstones::COLLECTION_HISTORY,
-            &tombstone_id,
-            &crate::services::sync_transfer::device_id(),
-            deleted_at,
-        )?;
 
         conn.execute("DELETE FROM clipboard WHERE id = ?1", params![id])?;
 
@@ -971,114 +803,76 @@ pub fn delete_clipboard_items(ids: &[i64]) -> Result<(), String> {
         .into_iter()
         .collect();
 
-    let images_to_delete: Vec<String> = with_connection(|conn| {
-        let mut image_id_set: HashSet<String> = HashSet::new();
-        let mut tombstone_ids = Vec::new();
-        for id in &unique_ids {
-            let item: Option<(Option<String>, Option<String>)> = conn
-                .query_row(
-                    "SELECT image_id, uuid FROM clipboard WHERE id = ?",
-                    params![id],
-                    |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
-                )
-                .optional()?;
+    // SQLite 绑定变量数量有上限，大范围删除（如全选）按块处理；每块独立短事务、独立持锁
+    let mut images_to_delete: HashSet<String> = HashSet::new();
+    let mut deleted_total: usize = 0;
 
-            if let Some((image_ids, uuid)) = item {
-                if let Some(image_ids) = image_ids {
-                    for image_id in split_image_ids(&image_ids) {
-                        image_id_set.insert(image_id);
-                    }
-                }
-                tombstone_ids.push(uuid.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| id.to_string()));
-            }
-        }
+    for chunk in unique_ids.chunks(DELETE_CHUNK_SIZE) {
+        let (deleted, batch_images) =
+            with_connection(|conn| delete_clipboard_rows_batch(conn, chunk))?;
+        deleted_total += deleted;
+        images_to_delete.extend(batch_images);
+    }
 
-        let tx = conn.unchecked_transaction()?;
-        let deleted_at = chrono::Local::now().timestamp();
-        let local_device_id = crate::services::sync_transfer::device_id();
-        for uuid in &tombstone_ids {
-            super::tombstones::record_sync_tombstone_in_conn(
-                &tx,
-                super::tombstones::COLLECTION_HISTORY,
-                uuid,
-                &local_device_id,
-                deleted_at,
-            )?;
-        }
-        for id in &unique_ids {
-            tx.execute("DELETE FROM clipboard WHERE id = ?1", params![id])?;
-        }
-        tx.commit()?;
+    if deleted_total == 0 {
+        return Ok(());
+    }
 
-        let mut to_delete = Vec::new();
-        for image_id in image_id_set {
-            if !is_image_id_referenced(conn, &image_id)? {
-                to_delete.push(image_id);
-            }
-        }
-
-        Ok(to_delete)
+    let unreferenced = with_connection(|conn| {
+        maybe_shrink_after_bulk_delete(conn, deleted_total);
+        collect_unreferenced_image_ids(conn, images_to_delete)
     })?;
 
-    for id in &unique_ids {
-        let _ = delete_clipboard_data_items("clipboard", &id.to_string());
-    }
-    delete_image_files(images_to_delete)
+    delete_image_files(unreferenced)
 }
 
 // 清空所有剪贴板历史
+//
+// 先快照调用瞬间的最大 id：清空期间的删除只作用于快照之前的行，
+// 避免把用户刚复制进来、id 更大的新条目一并删掉。
+// 删除同样分块短事务，避免一次长事务独占连接。
 pub fn clear_clipboard_history() -> Result<(), String> {
-    let images_to_delete: Vec<String> = with_connection(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, image_id, uuid FROM clipboard",
-        )?;
-        let ids_iter = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-            ))
-        })?;
-        let mut set: HashSet<String> = HashSet::new();
-        let mut tombstone_ids = Vec::new();
-        for r in ids_iter {
-            if let Ok((id, image_ids, uuid)) = r {
-                if let Some(image_ids) = image_ids {
-                    for iid in split_image_ids(&image_ids) {
-                        set.insert(iid);
-                    }
-                }
-                tombstone_ids.push(uuid.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| id.to_string()));
-            }
-        }
-        drop(stmt);
-
-        let tx = conn.unchecked_transaction()?;
-        let deleted_at = chrono::Local::now().timestamp();
-        let local_device_id = crate::services::sync_transfer::device_id();
-        for uuid in tombstone_ids {
-            super::tombstones::record_sync_tombstone_in_conn(
-                &tx,
-                super::tombstones::COLLECTION_HISTORY,
-                &uuid,
-                &local_device_id,
-                deleted_at,
-            )?;
-        }
-        tx.execute("DELETE FROM clipboard", [])?;
-        tx.commit()?;
-
-        let mut to_delete = Vec::new();
-        for iid in set.into_iter() {
-            if !is_image_id_referenced(conn, &iid)? {
-                to_delete.push(iid);
-            }
-        }
-        Ok(to_delete)
+    let max_id: Option<i64> = with_connection(|conn| {
+        conn.query_row("SELECT MAX(id) FROM clipboard", [], |row| row.get(0))
     })?;
 
-    let _ = delete_clipboard_data_items_by_kind("clipboard");
-    delete_image_files(images_to_delete)
+    let Some(max_id) = max_id else {
+        return Ok(());
+    };
+
+    let mut images_to_delete: HashSet<String> = HashSet::new();
+    let mut deleted_total: usize = 0;
+
+    loop {
+        let (deleted, batch_images) = with_connection(|conn| {
+            let ids = select_clear_ids(conn, max_id, DELETE_CHUNK_SIZE)?;
+            delete_clipboard_rows_batch(conn, &ids)
+        })?;
+
+        if deleted == 0 {
+            break;
+        }
+        deleted_total += deleted;
+        images_to_delete.extend(batch_images);
+    }
+
+    // 兜底：清掉快照范围内可能残留的原始数据（例如历史遗留的孤儿行），
+    // 快照之后新采集的条目及其原始数据保持不动
+    with_connection(|conn| {
+        conn.execute(
+            "DELETE FROM clipboard_data
+             WHERE target_kind = 'clipboard' AND CAST(target_id AS INTEGER) <= ?1",
+            params![max_id],
+        )?;
+        Ok(())
+    })?;
+
+    let unreferenced = with_connection(|conn| {
+        maybe_shrink_after_bulk_delete(conn, deleted_total);
+        collect_unreferenced_image_ids(conn, images_to_delete)
+    })?;
+
+    delete_image_files(unreferenced)
 }
 
 // 排序逻辑
@@ -1159,10 +953,10 @@ pub fn update_clipboard_item(
     html_content: Option<String>,
 ) -> Result<(), String> {
     let should_clear_raw_formats = with_connection(|conn| {
-        let (old_content, old_html_content): (String, Option<String>) = conn.query_row(
-            "SELECT content, html_content FROM clipboard WHERE id = ?1",
+        let (old_content, old_html_content, content_type): (String, Option<String>, String) = conn.query_row(
+            "SELECT content, html_content, content_type FROM clipboard WHERE id = ?1",
             params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
 
         let content_changed = old_content != content;
@@ -1171,16 +965,18 @@ pub fn update_clipboard_item(
             .map(|new_html| old_html_content.as_deref() != Some(new_html.as_str()))
             .unwrap_or(false);
 
+        // 内容变更后同步刷新去重哈希，避免旧哈希导致后续去重失效
+        let content_hash = compute_content_hash(&content, &content_type);
         let now = chrono::Local::now().timestamp();
         let rows = if let Some(ref html_content) = html_content {
             conn.execute(
-                "UPDATE clipboard SET content = ?1, html_content = ?2, updated_at = ?3 WHERE id = ?4",
-                params![&content, html_content, now, id],
+                "UPDATE clipboard SET content = ?1, html_content = ?2, content_hash = ?3, updated_at = ?4 WHERE id = ?5",
+                params![&content, html_content, &content_hash, now, id],
             )?
         } else {
             conn.execute(
-                "UPDATE clipboard SET content = ?1, updated_at = ?2 WHERE id = ?3",
-                params![&content, now, id],
+                "UPDATE clipboard SET content = ?1, content_hash = ?2, updated_at = ?3 WHERE id = ?4",
+                params![&content, &content_hash, now, id],
             )?
         };
         if rows == 0 {
@@ -1221,5 +1017,125 @@ pub fn toggle_pin_clipboard_item(id: i64) -> Result<bool, String> {
             Ok(false)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{delete_clipboard_rows_batch, select_clear_ids, select_overflow_ids};
+    use rusqlite::Connection;
+
+    // 用内存库验证删除/选行语义，不接触真实数据目录
+    fn memory_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("打开内存数据库失败");
+        conn.execute_batch(
+            "CREATE TABLE clipboard (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                image_id TEXT,
+                item_order INTEGER NOT NULL DEFAULT 0,
+                is_pinned INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE clipboard_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_kind TEXT NOT NULL,
+                target_id TEXT NOT NULL,
+                raw_data BLOB
+            );",
+        )
+        .expect("创建测试表失败");
+        conn
+    }
+
+    fn insert_row(
+        conn: &Connection,
+        image_id: Option<&str>,
+        item_order: i64,
+        is_pinned: i64,
+        updated_at: i64,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO clipboard (image_id, item_order, is_pinned, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![image_id, item_order, is_pinned, updated_at],
+        )
+        .expect("插入测试数据失败");
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn select_overflow_ids_prefers_pinned_then_newest() {
+        let conn = memory_db();
+        let oldest = insert_row(&conn, None, 1, 0, 100);
+        let pinned = insert_row(&conn, None, 0, 1, 100);
+        let mid = insert_row(&conn, None, 3, 0, 200);
+        let newest = insert_row(&conn, None, 2, 0, 300);
+
+        // 4 行保留 2 行：应删除序号最小的 oldest 与非置顶最旧的 newest
+        let batch = select_overflow_ids(&conn, 2, 200).expect("查询超限行失败");
+        assert_eq!(batch.len(), 2);
+        assert!(batch.contains(&oldest));
+        assert!(batch.contains(&newest));
+        assert!(!batch.contains(&pinned), "置顶行必须保留");
+        assert!(!batch.contains(&mid), "保留下来的非置顶行不应被删除");
+
+        // 删除后再次查询不应再返回任何行（分块循环的终止条件）
+        let (deleted, _) = delete_clipboard_rows_batch(&conn, &batch).expect("批量删除失败");
+        assert_eq!(deleted, 2);
+        assert!(select_overflow_ids(&conn, 2, 200).expect("再次查询失败").is_empty());
+    }
+
+    #[test]
+    fn select_clear_ids_only_returns_rows_before_snapshot() {
+        let conn = memory_db();
+        let first = insert_row(&conn, None, 1, 0, 100);
+        let second = insert_row(&conn, None, 2, 0, 200);
+        let third = insert_row(&conn, None, 3, 0, 300);
+        let snapshot = third;
+        // 快照之后新采集的条目不应被清空
+        let later = insert_row(&conn, None, 4, 0, 400);
+
+        let batch = select_clear_ids(&conn, snapshot, 200).expect("查询清空范围失败");
+        assert_eq!(batch, vec![first, second, third]);
+        assert!(!batch.contains(&later));
+
+        delete_clipboard_rows_batch(&conn, &batch).expect("批量删除失败");
+        assert!(select_clear_ids(&conn, snapshot, 200).expect("再次查询失败").is_empty());
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM clipboard", [], |row| row.get(0))
+            .expect("统计剩余行失败");
+        assert_eq!(remaining, 1, "快照之外的条目应保留");
+    }
+
+    #[test]
+    fn delete_batch_removes_rows_data_and_reports_image_ids() {
+        let conn = memory_db();
+        let first = insert_row(&conn, Some("img-a,img-b"), 1, 0, 100);
+        let second = insert_row(&conn, None, 2, 0, 200);
+        let third = insert_row(&conn, Some("img-c"), 3, 0, 300);
+        for id in [first, second, third] {
+            conn.execute(
+                "INSERT INTO clipboard_data (target_kind, target_id, raw_data)
+                 VALUES ('clipboard', ?1, x'00')",
+                rusqlite::params![id.to_string()],
+            )
+            .expect("插入原始数据失败");
+        }
+
+        let (deleted, images) =
+            delete_clipboard_rows_batch(&conn, &[first, second]).expect("批量删除失败");
+        assert_eq!(deleted, 2);
+        assert_eq!(images.len(), 2);
+        assert!(images.contains("img-a"));
+        assert!(images.contains("img-b"));
+
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM clipboard", [], |row| row.get(0))
+            .expect("统计剩余行失败");
+        assert_eq!(rows, 1);
+        let data_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM clipboard_data", [], |row| row.get(0))
+            .expect("统计剩余原始数据失败");
+        assert_eq!(data_rows, 1, "只应删除被删行对应的原始数据");
+    }
 }
 

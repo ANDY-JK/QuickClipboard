@@ -240,24 +240,6 @@ impl AppSounds {
         Self::do_play_copy(&settings);
     }
 
-    // 复制音效 - 立即播放
-    pub fn play_copy_immediate() {
-        let settings = crate::get_settings();
-        if settings.copy_sound_timing != "immediate" {
-            return;
-        }
-
-        let last_paste_time = LAST_PASTE_SOUND_TIME_MS.load(Ordering::Relaxed);
-        if last_paste_time > 0 {
-            let current_time = current_time_ms();
-            if current_time.saturating_sub(last_paste_time) < 300 {
-                return;
-            }
-        }
-        
-        Self::do_play_copy(&settings);
-    }
-
     fn do_play_copy(settings: &crate::services::AppSettings) {
         if !settings.sound_enabled {
             return;

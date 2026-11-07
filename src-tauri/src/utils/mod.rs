@@ -6,6 +6,7 @@ pub mod image;
 pub mod system;
 pub mod text;
 pub mod html;
+pub mod html_sanitizer;
 pub mod app_links;
 pub mod cf_html;
 

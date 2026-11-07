@@ -7,6 +7,12 @@ import {
   clearClipboardHistory as apiClearHistory,
   pasteClipboardItem as apiPasteClipboardItem
 } from '@shared/api'
+import {
+  createMaintenanceRetryScheduler,
+  isDatabaseMaintenanceError,
+  retryOnDatabaseMaintenance
+} from '@shared/utils/databaseMaintenance'
+import { forgetItems, clearExtensionResults } from '@/extensions/host/registry'
 
 listen('paste-count-updated', (event) => {
   const id = event.payload
@@ -21,7 +27,21 @@ listen('paste-count-updated', (event) => {
 
 const CACHE_WINDOW_SIZE = 120
 const CACHE_BUFFER = 40
+const MAX_CONCURRENT_RANGE_LOADS = 2
+const rangeLoadQueue = []
+const activeRangeLoadKeys = new Set()
+let activeRangeLoadCount = 0
 let clipboardRequestVersion = 0
+
+// 数据库维护窗口结束后的有界补刷（1.5s / 3s / 6s / 12s，共 4 次），
+// 定时逻辑抽到 shared/utils/databaseMaintenance，与收藏列表共用。
+const maintenanceRetry = createMaintenanceRetryScheduler({
+  run: () => initClipboardItems(),
+  shouldDefer: () => clipboardStore.loading,
+  onAttempt: (attempt) => {
+    console.info(`数据库维护中，第 ${attempt} 次自动刷新剪贴板列表`)
+  },
+})
 
 function nextClipboardRequestVersion() {
   clipboardRequestVersion += 1
@@ -33,6 +53,11 @@ function isClipboardRequestCurrent(version, filter, contentType, pasteStatus) {
     && clipboardStore.filter === filter
     && clipboardStore.contentType === contentType
     && clipboardStore.pasteStatus === pasteStatus
+}
+
+// 供列表组件卸载时调用，避免定时器在窗口销毁后继续触发后台请求。
+export function cancelClipboardMaintenanceRetry() {
+  maintenanceRetry.cancel()
 }
 
 // 剪贴板 Store
@@ -49,14 +74,68 @@ export const clipboardStore = proxy({
   loading: false,
   error: null,
   loadingRanges: new Set(),
+  loadedRanges: [],
+  hasLoadedOnce: false,
+  pendingRefresh: false,
   currentViewRange: { start: 0, end: 50 }, 
-  
+
+  // 已加载索引重建为连续区间，用于计算“真正缺失”的分页范围。
+  rebuildLoadedRanges() {
+    const indices = Object.keys(this.items)
+      .map(key => Number(key))
+      .filter(Number.isInteger)
+      .sort((a, b) => a - b)
+
+    const ranges = []
+    for (const index of indices) {
+      const lastRange = ranges[ranges.length - 1]
+      if (lastRange && index === lastRange[1] + 1) {
+        lastRange[1] = index
+      } else {
+        ranges.push([index, index])
+      }
+    }
+    this.loadedRanges = ranges
+  },
+
+  // 返回 [start,end] 中尚未加载且未在加载中的子区间。
+  getMissingRanges(startIndex, endIndex) {
+    const blockedRanges = []
+    for (const range of this.loadedRanges) {
+      blockedRanges.push(range)
+    }
+    for (const rangeKey of this.loadingRanges) {
+      const [start, end] = rangeKey.split('-').map(Number)
+      if (Number.isInteger(start) && Number.isInteger(end)) {
+        blockedRanges.push([start, end])
+      }
+    }
+    blockedRanges.sort((a, b) => a[0] - b[0])
+
+    const missing = []
+    let cursor = startIndex
+    for (const [start, end] of blockedRanges) {
+      if (end < cursor) continue
+      if (start > endIndex) break
+      if (start > cursor) {
+        missing.push([cursor, Math.min(start - 1, endIndex)])
+      }
+      cursor = Math.max(cursor, end + 1)
+      if (cursor > endIndex) break
+    }
+    if (cursor <= endIndex) {
+      missing.push([cursor, endIndex])
+    }
+    return missing
+  },
+
   // 设置指定范围的数据
   setItemsInRange(startIndex, items) {
     items.forEach((item, offset) => {
       this.items[startIndex + offset] = item
     })
     this.trimCache()
+    this.rebuildLoadedRanges()
   },
   
   updateViewRange(startIndex, endIndex) {
@@ -76,11 +155,17 @@ export const clipboardStore = proxy({
     const keepStart = Math.max(0, center - CACHE_BUFFER)
     const keepEnd = Math.min(this.totalCount - 1, center + CACHE_BUFFER)
     
+    let removed = false
     for (const key of Object.keys(this.items)) {
       const index = parseInt(key, 10)
       if (index < keepStart || index > keepEnd) {
         delete this.items[key]
+        removed = true
       }
+    }
+
+    if (removed) {
+      this.rebuildLoadedRanges()
     }
   },
 
@@ -123,7 +208,15 @@ export const clipboardStore = proxy({
   },
 
   addItem(item) {
-    this.items = {}
+    if (!item?.id) {
+      return
+    }
+
+    // 本地插入，避免清空 items 造成整表回退到骨架屏。
+    if (Number.isInteger(this.findLoadedItemIndex(item.id))) {
+      return
+    }
+    this.insertLoadedItemAt(item, 0, this.totalCount + 1)
   },
   
   // 删除项
@@ -158,6 +251,9 @@ export const clipboardStore = proxy({
 
     this.items = nextItems
     this.totalCount = Math.max(0, this.totalCount - removedCount)
+    this.rebuildLoadedRanges()
+    // 删除条目后同步清掉扩展识别结果，避免缓存与 chip 残留。
+    forgetItems(Array.from(removeIdSet))
 
     if (this.selectionAnchorIndex != null) {
       this.selectionAnchorIndex = Math.max(0, this.selectionAnchorIndex - removedCount)
@@ -222,7 +318,7 @@ export const clipboardStore = proxy({
   },
 
   insertLoadedItemAt(item, insertIndex, totalCount) {
-    if (!item || !Number.isInteger(insertIndex) || insertIndex < 0 || insertIndex >= totalCount) {
+    if (!item || !Number.isInteger(insertIndex) || insertIndex < 0 || insertIndex > totalCount) {
       return false
     }
 
@@ -314,7 +410,32 @@ export const clipboardStore = proxy({
       }
     }
 
+    this.rebuildLoadedRanges()
     return true
+  },
+
+  // 粘贴置顶：本地移动已加载项，避免清空 items 触发整表骨架屏。
+  moveLoadedItemToTop(id) {
+    const index = this.findLoadedItemIndex(id)
+    if (!Number.isInteger(index)) {
+      return false
+    }
+
+    const item = this.items[index]
+    if (!item || item.is_pinned) {
+      return false
+    }
+
+    const targetIndex = Object.keys(this.items)
+      .map(key => Number(key))
+      .filter(key => key < index && this.items[key]?.is_pinned)
+      .length
+
+    if (targetIndex === index) {
+      return true
+    }
+
+    return this.insertLoadedItemAt(item, targetIndex, this.totalCount)
   },
   
   setFilter(value) {
@@ -322,6 +443,7 @@ export const clipboardStore = proxy({
       nextClipboardRequestVersion()
       this.filter = value
       this.items = {}
+      this.loadedRanges = []
       this.loadingRanges = new Set()
       this.exitMultiSelectMode()
     }
@@ -332,6 +454,7 @@ export const clipboardStore = proxy({
       nextClipboardRequestVersion()
       this.contentType = value
       this.items = {}
+      this.loadedRanges = []
       this.loadingRanges = new Set()
       this.exitMultiSelectMode()
     }
@@ -342,6 +465,7 @@ export const clipboardStore = proxy({
       nextClipboardRequestVersion()
       this.pasteStatus = value
       this.items = {}
+      this.loadedRanges = []
       this.loadingRanges = new Set()
       this.exitMultiSelectMode()
     }
@@ -431,8 +555,10 @@ export const clipboardStore = proxy({
   },
   
   clearAll() {
+    clearExtensionResults()
     this.items = {}
     this.totalCount = 0
+    this.loadedRanges = []
     this.currentViewRange = { start: 0, end: 50 }
     this.exitMultiSelectMode()
   },
@@ -448,18 +574,97 @@ export const clipboardStore = proxy({
   
   isRangeLoading(start, end) {
     return this.loadingRanges.has(`${start}-${end}`)
-  },
-
-  hasOverlappingLoadingRange(start, end) {
-    for (const range of this.loadingRanges) {
-      const [loadStart, loadEnd] = range.split('-').map(Number);
-      if (start <= loadEnd && end >= loadStart) {
-        return true;
-      }
-    }
-    return false;
   }
 })
+
+// 合并/排队加载：重叠请求不再直接丢弃，而是只补齐尚未覆盖的子区间。
+function buildRangeLoadKey(task) {
+  return `${task.version}|${task.filter || ''}|${task.contentType}|${task.pasteStatus}|${task.start}-${task.end}`
+}
+
+function flushRangeLoadQueue() {
+  while (activeRangeLoadCount < MAX_CONCURRENT_RANGE_LOADS && rangeLoadQueue.length > 0) {
+    const task = rangeLoadQueue.shift()
+
+    if (task.version !== clipboardRequestVersion) {
+      task.resolve()
+      continue
+    }
+    if (activeRangeLoadKeys.has(task.key)) {
+      task.resolve()
+      continue
+    }
+
+    activeRangeLoadKeys.add(task.key)
+    activeRangeLoadCount += 1
+    clipboardStore.addLoadingRange(task.start, task.end)
+
+    runRangeLoadTask(task).finally(() => {
+      activeRangeLoadKeys.delete(task.key)
+      activeRangeLoadCount -= 1
+      flushRangeLoadQueue()
+    })
+  }
+}
+
+function enqueueRangeLoad(task) {
+  if (activeRangeLoadKeys.has(task.key)) {
+    return null
+  }
+  const queued = rangeLoadQueue.find(entry => entry.key === task.key)
+  if (queued) {
+    return queued.promise
+  }
+
+  let resolve
+  const promise = new Promise((res) => {
+    resolve = res
+  })
+  rangeLoadQueue.push({ ...task, promise, resolve })
+  flushRangeLoadQueue()
+  return promise
+}
+
+async function runRangeLoadTask(task) {
+  try {
+    const result = await retryOnDatabaseMaintenance(() => getClipboardHistory({
+      offset: task.start,
+      limit: task.end - task.start + 1,
+      contentType: task.contentType !== 'all' ? task.contentType : undefined,
+      pasteStatus: task.pasteStatus,
+      search: task.filter || undefined
+    }))
+
+    if (!isClipboardRequestCurrent(task.version, task.filter, task.contentType, task.pasteStatus)) {
+      return
+    }
+
+    // 将数据按索引存储
+    clipboardStore.setItemsInRange(task.start, result.items)
+
+    // 更新总数
+    if (result.total_count !== undefined) {
+      clipboardStore.totalCount = result.total_count
+    }
+  } catch (err) {
+    if (isClipboardRequestCurrent(task.version, task.filter, task.contentType, task.pasteStatus)) {
+      if (isDatabaseMaintenanceError(err)) {
+        // 压缩数据库期间锁库：保持现有列表，标记待刷新并安排退避补刷，避免弹错误。
+        clipboardStore.pendingRefresh = true
+        maintenanceRetry.schedule()
+        console.info('数据库压缩中，稍后刷新剪贴板列表')
+      } else {
+        console.error(`加载范围 ${task.start}-${task.end} 失败:`, err)
+        clipboardStore.error = err.message || '加载失败'
+      }
+    }
+  } finally {
+    if (isClipboardRequestCurrent(task.version, task.filter, task.contentType, task.pasteStatus)) {
+      clipboardStore.removeLoadingRange(task.start, task.end)
+    }
+    task.resolve()
+  }
+}
 
 // 加载指定范围的数据
 export async function loadClipboardRange(startIndex, endIndex, requestContext = null) {
@@ -476,58 +681,39 @@ export async function loadClipboardRange(startIndex, endIndex, requestContext = 
     return
   }
 
-  // 避免重复加载
-  if (clipboardStore.isRangeLoading(startIndex, endIndex) || 
-      clipboardStore.hasOverlappingLoadingRange(startIndex, endIndex)) {
+  if (!Number.isInteger(startIndex) || !Number.isInteger(endIndex) || startIndex < 0 || endIndex < startIndex) {
     return
   }
-  
-  // 检查是否所有数据都已加载
-  let allLoaded = true
-  for (let i = startIndex; i <= endIndex; i++) {
-    if (!clipboardStore.hasItem(i)) {
-      allLoaded = false
-      break
-    }
-  }
-  
-  if (allLoaded) {
-    return
-  }
-  
-  clipboardStore.addLoadingRange(startIndex, endIndex)
-  
-  try {
-    const limit = endIndex - startIndex + 1
-    const result = await getClipboardHistory({
-      offset: startIndex,
-      limit,
-      contentType: requestContentType !== 'all' ? requestContentType : undefined,
-      pasteStatus: requestPasteStatus,
-      search: requestFilter || undefined
-    })
 
-    if (!isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
-      return
+  const maxIndex = clipboardStore.totalCount > 0 ? clipboardStore.totalCount - 1 : endIndex
+  const safeEnd = Math.min(endIndex, maxIndex)
+  if (safeEnd < startIndex) {
+    return
+  }
+
+  const missingRanges = clipboardStore.getMissingRanges(startIndex, safeEnd)
+  if (missingRanges.length === 0) {
+    return
+  }
+
+  const tasks = []
+  for (const [start, end] of missingRanges) {
+    const task = {
+      start,
+      end,
+      version: requestVersion,
+      filter: requestFilter,
+      contentType: requestContentType,
+      pasteStatus: requestPasteStatus,
     }
-    
-    // 将数据按索引存储
-    clipboardStore.setItemsInRange(startIndex, result.items)
-    
-    // 更新总数
-    if (result.total_count !== undefined) {
-      clipboardStore.totalCount = result.total_count
-    }
-  } catch (err) {
-    if (isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
-      console.error(`加载范围 ${startIndex}-${endIndex} 失败:`, err)
-      clipboardStore.error = err.message || '加载失败'
-    }
-  } finally {
-    if (isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
-      clipboardStore.removeLoadingRange(startIndex, endIndex)
+    task.key = buildRangeLoadKey(task)
+    const promise = enqueueRangeLoad(task)
+    if (promise) {
+      tasks.push(promise)
     }
   }
+
+  await Promise.all(tasks)
 }
 
 export async function loadClipboardItems() {
@@ -543,19 +729,22 @@ export async function initClipboardItems() {
 
   clipboardStore.loading = true
   clipboardStore.error = null
+  let completed = false
   
   try {
     clipboardStore.items = {}
+    clipboardStore.loadedRanges = []
     clipboardStore.loadingRanges = new Set()
+    clipboardStore.pendingRefresh = false
     
     if (requestContentType !== 'all' || requestFilter || requestPasteStatus !== 'all') {
-      const result = await getClipboardHistory({
+      const result = await retryOnDatabaseMaintenance(() => getClipboardHistory({
         offset: 0,
         limit: 100,
         contentType: requestContentType !== 'all' ? requestContentType : undefined,
         pasteStatus: requestPasteStatus,
         search: requestFilter || undefined
-      })
+      }))
 
       if (!isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
         return
@@ -564,7 +753,7 @@ export async function initClipboardItems() {
       clipboardStore.totalCount = result.total_count
       clipboardStore.setItemsInRange(0, result.items)
     } else {
-      const totalCount = await getClipboardTotalCount()
+      const totalCount = await retryOnDatabaseMaintenance(() => getClipboardTotalCount())
 
       if (!isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
         return
@@ -582,14 +771,27 @@ export async function initClipboardItems() {
         })
       }
     }
+    completed = true
   } catch (err) {
     if (isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
-      console.error('初始化剪贴板失败:', err)
-      clipboardStore.error = err.message || '加载失败'
+      if (isDatabaseMaintenanceError(err)) {
+        clipboardStore.pendingRefresh = true
+        maintenanceRetry.schedule()
+        console.info('数据库压缩中，稍后刷新剪贴板列表')
+      } else {
+        console.error('初始化剪贴板失败:', err)
+        clipboardStore.error = err.message || '加载失败'
+      }
     }
   } finally {
     if (isClipboardRequestCurrent(requestVersion, requestFilter, requestContentType, requestPasteStatus)) {
       clipboardStore.loading = false
+      clipboardStore.hasLoadedOnce = true
+      // 成功且没有残留的待刷新标记时，结束退避并清掉定时器；
+      // 若范围加载仍命中维护中（pendingRefresh 为 true），保留下一次补刷。
+      if (completed && !clipboardStore.pendingRefresh) {
+        cancelClipboardMaintenanceRetry()
+      }
     }
   }
 }

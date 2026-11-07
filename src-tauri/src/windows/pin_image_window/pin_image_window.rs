@@ -260,6 +260,12 @@ pub fn get_pin_image_data(window: WebviewWindow) -> Result<serde_json::Value, St
     if let Some(data_map) = PIN_IMAGE_DATA_MAP.get() {
         let map = data_map.lock().unwrap();
         if let Some(data) = map.get(window.label()) {
+            // 贴图可能来自任意本地文件（含从资源管理器拖入的图片），返回前端前授权 asset 访问
+            let app = window.app_handle();
+            crate::services::asset_scope::allow_file(app, &data.file_path);
+            if let Some(original_path) = data.original_image_path.as_deref() {
+                crate::services::asset_scope::allow_file(app, original_path);
+            }
             return Ok(json!({
                 "file_path": data.file_path,
                 "width": data.width,

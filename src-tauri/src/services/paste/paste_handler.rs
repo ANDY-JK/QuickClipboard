@@ -572,9 +572,21 @@ fn update_item_content(
         let now = chrono::Local::now().timestamp();
 
         if let Some(id) = clipboard_id {
+            // 内容变更后同步刷新去重哈希
+            use rusqlite::OptionalExtension;
+            let content_type: String = conn
+                .query_row(
+                    "SELECT content_type FROM clipboard WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or_default();
+            let content_hash =
+                crate::services::database::clipboard::compute_content_hash(new_content, &content_type);
             conn.execute(
-                "UPDATE clipboard SET content = ?, updated_at = ?, created_at = ? WHERE id = ?",
-                params![new_content, now, now, id],
+                "UPDATE clipboard SET content = ?, content_hash = ?, updated_at = ?, created_at = ? WHERE id = ?",
+                params![new_content, content_hash, now, now, id],
             )?;
         } else if let Some(id) = favorite_id {
             conn.execute(

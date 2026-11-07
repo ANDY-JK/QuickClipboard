@@ -1,4 +1,4 @@
-use crate::services::{AppSettings, get_settings, update_settings, get_data_directory};
+use crate::services::{AppSettings, get_settings, update_settings};
 use crate::services::settings::storage::SettingsStorage;
 use tauri::Manager;
 use serde_json::Value;
@@ -18,14 +18,6 @@ fn handle_disable_edge_hide(app: &tauri::AppHandle) {
             let _ = crate::windows::main_window::restore_from_snap(&window);
             crate::windows::main_window::stop_edge_monitoring();
         }
-    }
-}
-
-fn normalize_update_check_interval(value: &str) -> String {
-    match value {
-        "every3days" => "every3days".to_string(),
-        "weekly" => "weekly".to_string(),
-        _ => "daily".to_string(),
     }
 }
 
@@ -67,23 +59,35 @@ fn restore_main_window_default_size(app: &tauri::AppHandle) {
 
 // 重新加载设置
 #[tauri::command]
-pub fn reload_settings() -> Result<AppSettings, String> {
-    let settings = SettingsStorage::load()?;
-    update_settings(settings.clone())?;
+pub async fn reload_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
+    // 读盘与写盘都走阻塞线程池，避免在异步命令线程上做文件 I/O。
+    let settings = tauri::async_runtime::spawn_blocking(SettingsStorage::load)
+        .await
+        .map_err(|e| format!("读取设置任务执行失败: {}", e))??;
+
+    let to_update = settings.clone();
+    tauri::async_runtime::spawn_blocking(move || update_settings(to_update))
+        .await
+        .map_err(|e| format!("应用设置任务执行失败: {}", e))??;
+
+    crate::services::asset_scope::allow_settings_paths(&app, &settings);
     Ok(settings)
 }
 
-#[tauri::command]
-pub fn save_settings(mut settings: AppSettings, app: tauri::AppHandle) -> Result<(), String> {
+// 一次保存在落盘后需要触发的副作用
+struct SettingsChanges {
+    clipboard_monitor_changed: bool,
+    remember_window_size_disabled: bool,
+    quickpaste_enabled_changed: bool,
+    show_tray_icon_changed: bool,
+}
+
+/// 归一化设置并完成落盘前的窗口状态调整（不写盘）。
+fn prepare_settings(
+    mut settings: AppSettings,
+    app: &tauri::AppHandle,
+) -> (AppSettings, SettingsChanges) {
     let old_settings = get_settings();
-    let webdav_password = std::mem::take(&mut settings.webdav_password);
-    if !webdav_password.is_empty() {
-        crate::services::secure_credentials::set_webdav_password(
-            &settings.webdav_url,
-            &settings.webdav_username,
-            &webdav_password,
-        )?;
-    }
     if settings.settings_migration_version.is_none()
         || settings.settings_migration_version < old_settings.settings_migration_version
     {
@@ -97,9 +101,6 @@ pub fn save_settings(mut settings: AppSettings, app: tauri::AppHandle) -> Result
         !old_settings.remember_window_size && settings.remember_window_size;
     let remember_window_size_disabled =
         old_settings.remember_window_size && !settings.remember_window_size;
-    let webdav_crypto_scope_changed = old_settings.webdav_url != settings.webdav_url
-        || old_settings.webdav_username != settings.webdav_username
-        || old_settings.webdav_root_path != settings.webdav_root_path;
     let show_tray_icon_changed = old_settings.show_tray_icon != settings.show_tray_icon;
 
     if edge_hide_changed && !settings.edge_hide_enabled {
@@ -107,43 +108,60 @@ pub fn save_settings(mut settings: AppSettings, app: tauri::AppHandle) -> Result
         settings.edge_snap_edge = None;
         settings.edge_snap_ratio = None;
         settings.edge_snap_monitor_id = None;
-        handle_disable_edge_hide(&app);
+        handle_disable_edge_hide(app);
     }
 
-    settings.update_check_interval = normalize_update_check_interval(&settings.update_check_interval);
     if remember_window_size_enabled {
-        settings.saved_window_size = capture_main_window_logical_size(&app);
+        settings.saved_window_size = capture_main_window_logical_size(app);
     } else if !settings.remember_window_size {
         settings.saved_window_size = None;
     }
-    if webdav_crypto_scope_changed {
-        crate::services::webdav_sync::crypto::clear_cached_keys();
-    }
-    
-    update_settings(settings.clone())?;
 
-    if remember_window_size_disabled {
-        restore_main_window_default_size(&app);
+    (
+        settings,
+        SettingsChanges {
+            clipboard_monitor_changed,
+            remember_window_size_disabled,
+            quickpaste_enabled_changed,
+            show_tray_icon_changed,
+        },
+    )
+}
+
+/// 落盘并执行其余副作用。`persist` 由调用方提供：命令层用 spawn_blocking，
+/// 托盘/热键等同步回调直接阻塞写入。
+fn apply_settings(
+    settings: &AppSettings,
+    changes: &SettingsChanges,
+    app: &tauri::AppHandle,
+    persist: Result<(), String>,
+) -> Result<(), String> {
+    persist?;
+    // 新选的背景图 / 自定义字体可能位于任意目录，保存后立即授权，避免设置窗口预览白屏
+    crate::services::asset_scope::allow_settings_paths(app, settings);
+
+    if changes.remember_window_size_disabled {
+        restore_main_window_default_size(app);
     }
-    
+
     if let Err(e) = crate::hotkey::reload_from_settings() {
         eprintln!("重新加载快捷键失败: {}", e);
     }
-    
-    if clipboard_monitor_changed {
+
+    if changes.clipboard_monitor_changed {
         if settings.clipboard_monitor {
             crate::start_clipboard_monitor()?;
         } else {
             crate::stop_clipboard_monitor()?;
         }
-        
+
         use tauri::Emitter;
         let _ = app.emit("settings-changed", serde_json::json!({
             "clipboardMonitor": settings.clipboard_monitor
         }));
     }
-    
-    if quickpaste_enabled_changed {
+
+    if changes.quickpaste_enabled_changed {
         if settings.quickpaste_enabled {
             let app_clone = app.clone();
             std::thread::spawn(move || {
@@ -155,7 +173,7 @@ pub fn save_settings(mut settings: AppSettings, app: tauri::AppHandle) -> Result
         }
     }
 
-    if show_tray_icon_changed {
+    if changes.show_tray_icon_changed {
         if let Some(tray) = app.tray_by_id("main-tray") {
             if let Err(e) = tray.set_visible(settings.show_tray_icon) {
                 eprintln!("切换托盘图标可见性失败: {}", e);
@@ -167,14 +185,29 @@ pub fn save_settings(mut settings: AppSettings, app: tauri::AppHandle) -> Result
 }
 
 #[tauri::command]
-pub fn reset_settings_to_default(app: tauri::AppHandle) -> Result<(), String> {
-    let defaults = AppSettings::default();
-    save_settings(defaults, app)
+pub async fn save_settings(settings: AppSettings, app: tauri::AppHandle) -> Result<(), String> {
+    let (settings, changes) = prepare_settings(settings, &app);
+    let to_save = settings.clone();
+    let persist = tauri::async_runtime::spawn_blocking(move || update_settings(to_save))
+        .await
+        .map_err(|e| format!("保存设置任务执行失败: {}", e))?;
+    apply_settings(&settings, &changes, &app, persist)
+}
+
+/// 同步保存路径：托盘菜单 / 全局热键回调本身不在 async 命令上下文里。
+pub fn save_settings_blocking(
+    settings: AppSettings,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let (settings, changes) = prepare_settings(settings, app);
+    let persist = update_settings(settings.clone());
+    apply_settings(&settings, &changes, app, persist)
 }
 
 #[tauri::command]
-pub fn get_settings_cmd() -> AppSettings {
-    get_settings()
+pub async fn reset_settings_to_default(app: tauri::AppHandle) -> Result<(), String> {
+    let defaults = AppSettings::default();
+    save_settings(defaults, app).await
 }
 
 #[tauri::command]
@@ -217,13 +250,6 @@ pub fn get_app_version() -> Result<Value, String> {
         "version": version,
         "name": env!("CARGO_PKG_NAME"),
     }))
-}
-
-// 获取数据目录路径
-#[tauri::command]
-pub fn get_data_directory_cmd() -> Result<String, String> {
-    let path = get_data_directory()?;
-    Ok(path.to_string_lossy().to_string())
 }
 
 // 设置开机自启动
@@ -286,7 +312,7 @@ pub fn toggle_clipboard_monitor(app: &tauri::AppHandle) -> Result<(), String> {
     settings.clipboard_monitor = !settings.clipboard_monitor;
     let enabled = settings.clipboard_monitor;
     
-    let result = save_settings(settings, app.clone());
+    let result = save_settings_blocking(settings, app);
     if crate::services::low_memory::is_low_memory_mode() {
         let _ = crate::windows::tray::native_menu::update_native_menu(app);
     }
@@ -308,7 +334,7 @@ pub fn toggle_paste_with_format(app: &tauri::AppHandle) -> Result<(), String> {
         "pasteWithFormat": settings.paste_with_format
     }));
     
-    let result = save_settings(settings, app.clone());
+    let result = save_settings_blocking(settings, app);
     if crate::services::low_memory::is_low_memory_mode() {
         let _ = crate::windows::tray::native_menu::update_native_menu(app);
     }

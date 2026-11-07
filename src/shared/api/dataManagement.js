@@ -38,3 +38,26 @@ export async function resetAllData() {
 export async function listBackups() {
   return await invoke('dm_list_backups')
 }
+
+/**
+ * 清理无引用图片（剪贴板图片 + 老化缩略图）。
+ * 不传参数时后端使用默认值：7 天以前、单次最多 500 个。
+ * 返回 { scannedFiles, removedClipboardImages, removedThumbnailFiles, removedBytes,
+ *        failedDeletes, skippedUserFiles, truncated }。
+ */
+export async function cleanupOrphanImages({ minAgeDays, maxDelete } = {}) {
+  const payload = {}
+  if (Number.isFinite(minAgeDays)) payload.minAgeDays = minAgeDays
+  if (Number.isFinite(maxDelete)) payload.maxDelete = maxDelete
+  return await invoke('cleanup_orphan_images', payload)
+}
+
+/**
+ * 压缩数据库（VACUUM INTO + 原子替换）。
+ * 执行期间其他 DB 命令会返回「数据库正在维护（压缩中），请稍后重试」。
+ * 返回 { beforeBytes, afterBytes, savedBytes, autoVacuumBefore, autoVacuumAfter,
+ *        userVersion, clipboardItems, favoriteItems }。
+ */
+export async function compactDatabase() {
+  return await invoke('compact_database')
+}

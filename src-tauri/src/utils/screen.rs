@@ -158,6 +158,43 @@ impl ScreenUtils {
             .ok_or_else(|| "没有可用的显示器".to_string())
     }
 
+    // 贴边/隐藏兜底：判断矩形是否至少有 min_visible_margin 像素落在某块现存显示器内
+    pub fn is_window_rect_visible_with_margin(
+        app: &AppHandle,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        min_visible_margin: i32,
+    ) -> Result<bool, String> {
+        let work_areas = Self::get_work_area_rects(app)?;
+        if work_areas.is_empty() {
+            return Err("没有可用的显示器".to_string());
+        }
+
+        Ok(has_min_visible_overlap(
+            PhysicalRect::new(x, y, width, height),
+            &work_areas,
+            min_visible_margin,
+        ))
+    }
+
+    // 把矩形钳制到最近的现存显示器工作区，返回左上角坐标
+    pub fn clamp_window_rect_into_work_area(
+        app: &AppHandle,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) -> Result<(i32, i32), String> {
+        let work_areas = Self::get_work_area_rects(app)?;
+        let window = PhysicalRect::new(x, y, width, height);
+
+        resolve_visible_window_rect(window, &work_areas, 1)
+            .map(|rect| (rect.x, rect.y))
+            .ok_or_else(|| "没有可用的显示器".to_string())
+    }
+
     // 获取所有显示器信息 (x, y, w, h, scale_factor)
     pub fn get_all_monitors(app: &AppHandle) -> Result<Vec<(i32, i32, i32, i32, f64)>, String> {
         let monitors = app

@@ -248,6 +248,16 @@ fn resolve_position_in_monitor(
     }
 }
 
+// 当前主显示器对应的贴边上下文（用于保存的显示器标识失效时回落）
+fn primary_monitor_context(app: &tauri::AppHandle) -> Option<MonitorEdgeContext> {
+    let primary = app.primary_monitor().ok().flatten()?;
+    let primary_id = build_monitor_identifier(&primary);
+    build_monitor_contexts(app)
+        .ok()?
+        .into_iter()
+        .find(|monitor| monitor.id == primary_id)
+}
+
 fn resolve_saved_monitor_and_edge(
     app: &tauri::AppHandle,
     preferred_edge: SnapEdge,
@@ -260,6 +270,13 @@ fn resolve_saved_monitor_and_edge(
             if let Some(edge) = resolve_usable_edge_on_monitor(monitor, preferred_edge) {
                 return Ok((monitor.clone(), edge));
             }
+        }
+    }
+
+    // 保存的显示器标识失效（外接屏被拔掉/改名）：优先回落主显示器，而不是任意一块屏
+    if let Some(primary) = primary_monitor_context(app) {
+        if let Some(edge) = resolve_usable_edge_on_monitor(&primary, preferred_edge) {
+            return Ok((primary, edge));
         }
     }
 
@@ -357,13 +374,43 @@ pub(crate) fn resolve_snapped_position(
         SnapEdge::Bottom => (base_x, monitor.y + monitor.height - height + content_inset),
         SnapEdge::None => (base_x, base_y),
     };
-    Ok(ResolvedSnapPosition {
-        x: position.0,
-        y: position.1,
-        scale_factor: monitor.scale_factor,
-        edge: actual_edge,
-        monitor_id: monitor.id.clone(),
-    })
+    ensure_position_visible(
+        app,
+        ResolvedSnapPosition {
+            x: position.0,
+            y: position.1,
+            scale_factor: monitor.scale_factor,
+            edge: actual_edge,
+            monitor_id: monitor.id.clone(),
+        },
+        width,
+        height,
+    )
+}
+
+// 兜底：坐标若与所有现存显示器都没有可见交集（显示器更换/分辨率变化/旧坐标失效），
+// 钳制到最近的显示器工作区，避免整窗落在屏外后点击全部落空
+fn ensure_position_visible(
+    app: &tauri::AppHandle,
+    resolved: ResolvedSnapPosition,
+    width: i32,
+    height: i32,
+) -> Result<ResolvedSnapPosition, String> {
+    let visible = crate::utils::screen::ScreenUtils::is_window_rect_visible_with_margin(
+        app, resolved.x, resolved.y, width, height, 1,
+    )?;
+    if visible {
+        return Ok(resolved);
+    }
+
+    let (x, y) = crate::utils::screen::ScreenUtils::clamp_window_rect_into_work_area(
+        app, resolved.x, resolved.y, width, height,
+    )?;
+    eprintln!(
+        "[window] 贴边位置 ({},{}) 与现存显示器无交集，已钳制到 ({},{})",
+        resolved.x, resolved.y, x, y
+    );
+    Ok(ResolvedSnapPosition { x, y, ..resolved })
 }
 
 fn resolve_hidden_position(
@@ -392,13 +439,19 @@ fn resolve_hidden_position(
         SnapEdge::Bottom => (base_x, monitor.y + monitor.height - hide_offset),
         SnapEdge::None => (base_x, base_y),
     };
-    Ok(ResolvedSnapPosition {
+    let resolved = ResolvedSnapPosition {
         x: position.0,
         y: position.1,
         scale_factor: monitor.scale_factor,
         edge: actual_edge,
         monitor_id: monitor.id.clone(),
-    })
+    };
+
+    // edge_hide_offset=0 表示完全隐藏，保持既有语义；否则必须至少留一点可见区域
+    if hide_offset <= 0 || actual_edge == SnapEdge::None {
+        return Ok(resolved);
+    }
+    ensure_position_visible(app, resolved, width, height)
 }
 
 fn save_snap_layout(edge: SnapEdge, ratio: f64, monitor_id: Option<String>) {
@@ -708,7 +761,6 @@ pub fn show_snapped_window(window: &WebviewWindow) -> Result<(), String> {
     save_snap_layout(resolved.edge, ratio, Some(resolved.monitor_id));
     
     super::state::set_window_state(super::state::WindowState::Visible);
-    crate::services::webdav_sync::notify_main_window_shown(window.app_handle().clone());
     let _ = super::refresh_always_on_top(window);
 
     crate::input_monitor::enable_mouse_monitoring();
@@ -792,6 +844,33 @@ pub fn is_window_snapped() -> bool {
     is_snapped()
 }
 
+// 恢复前校验保存的贴边显示器标识：不存在则回落主显示器（再退到第一块屏）
+fn validate_snap_monitor_id(
+    app: &tauri::AppHandle,
+    saved: Option<&str>,
+) -> Result<Option<String>, String> {
+    let contexts = build_monitor_contexts(app)?;
+    if contexts.is_empty() {
+        return Err("没有可用的显示器".to_string());
+    }
+
+    if let Some(saved) = saved {
+        if contexts.iter().any(|monitor| monitor.id == saved) {
+            return Ok(Some(saved.to_string()));
+        }
+        eprintln!(
+            "[window] 保存的贴边显示器 {} 已不存在，回落到主显示器",
+            saved
+        );
+    }
+
+    if let Some(primary) = primary_monitor_context(app) {
+        return Ok(Some(primary.id));
+    }
+
+    Ok(contexts.first().map(|monitor| monitor.id.clone()))
+}
+
 // 启动时恢复贴边隐藏状态
 pub fn restore_edge_snap_on_startup(window: &WebviewWindow) -> Result<(), String> {
     let settings = crate::get_settings();
@@ -810,16 +889,26 @@ pub fn restore_edge_snap_on_startup(window: &WebviewWindow) -> Result<(), String
         _ => return Ok(()),
     };
 
+    // 显示器变更后 saved id 可能指向已拔掉的屏：校验失败时回落主显示器，并立即写回
+    let saved_monitor_id = settings.edge_snap_monitor_id.clone();
+    let monitor_id = validate_snap_monitor_id(window.app_handle(), saved_monitor_id.as_deref())?;
+    if monitor_id.as_deref() != saved_monitor_id.as_deref() {
+        let healed = monitor_id.clone();
+        let _ = crate::services::settings::update_with(|settings| {
+            settings.edge_snap_monitor_id = healed;
+        });
+    }
+
     let (restore_width, restore_height) = resolve_startup_restore_window_size(
         window,
         snapped_edge,
-        settings.edge_snap_monitor_id.as_deref(),
+        monitor_id.as_deref(),
         &settings,
     )?;
     let resolved = resolve_hidden_position(
         window.app_handle(),
         snapped_edge,
-        settings.edge_snap_monitor_id.as_deref(),
+        monitor_id.as_deref(),
         snapped_ratio,
         restore_width,
         restore_height,

@@ -47,6 +47,9 @@ pub struct AppSettings {
     pub settings_migration_version: Option<u32>,
     pub display_priority_order: String,
 
+    // 扩展设置
+    pub extensions_enabled: bool,
+
     // 音效设置
     pub sound_enabled: bool,
     pub sound_volume: f64,
@@ -63,25 +66,11 @@ pub struct AppSettings {
     // 预览窗口设置
     pub quickpaste_enabled: bool,
     pub quickpaste_shortcut: String,
-    pub transfer_shelf_create_shortcut: String,
     pub quickpaste_paste_on_modifier_release: bool,
     pub quickpaste_scroll_sound: bool,
     pub quickpaste_scroll_sound_path: String,
     pub quickpaste_window_width: u32,
     pub quickpaste_window_height: u32,
-
-    // AI翻译设置
-    pub ai_translation_enabled: bool,
-    pub ai_api_key: String,
-    pub ai_model: String,
-    pub ai_base_url: String,
-    pub ai_target_language: String,
-    pub ai_translate_on_copy: bool,
-    pub ai_translate_on_paste: bool,
-    pub ai_translation_prompt: String,
-    pub ai_input_speed: u32,
-    pub ai_newline_mode: String,
-    pub ai_output_mode: String,
 
     // 鼠标设置
     pub mouse_middle_button_enabled: bool,
@@ -144,9 +133,6 @@ pub struct AppSettings {
     pub show_list_index: bool,
     pub show_badges: bool,
     pub show_source_icon: bool,
-    pub update_check_interval: String,
-    pub disable_update_popup: bool,
-    pub include_beta_updates: Option<bool>,
 
     // 快捷键设置
     pub hotkeys_enabled: bool,
@@ -170,25 +156,6 @@ pub struct AppSettings {
     pub custom_storage_path: Option<String>,
     #[serde(alias = "use_custom_storage")]
     pub use_custom_storage: bool,
-
-    // WebDAV Sync 设置
-    pub webdav_enabled: bool,
-    pub webdav_url: String,
-    pub webdav_username: String,
-    #[serde(default, skip_serializing)]
-    pub webdav_password: String,
-    pub webdav_root_path: String,
-    pub webdav_auto_push: bool,
-    pub webdav_push_delay_secs: u64,
-    pub webdav_auto_pull: bool,
-    pub webdav_auto_pull_on_window_show: bool,
-    pub webdav_pull_interval_secs: u64,
-    pub webdav_push_shortcut: String,
-    pub webdav_pull_shortcut: String,
-    pub webdav_sync_clipboard: bool,
-    pub webdav_sync_favorites: bool,
-    pub webdav_sync_images: bool,
-    pub sync_transfer_active_mode: String,
 
 }
 
@@ -234,6 +201,7 @@ impl Default for AppSettings {
             file_preview: true,
             settings_migration_version: Some(SETTINGS_MIGRATION_VERSION_V3),
             display_priority_order: "text,html,image".to_string(),
+            extensions_enabled: true,
 
             sound_enabled: true,
             sound_volume: 50.0,
@@ -248,24 +216,11 @@ impl Default for AppSettings {
 
             quickpaste_enabled: true,
             quickpaste_shortcut: "Ctrl+`".to_string(),
-            transfer_shelf_create_shortcut: String::new(),
             quickpaste_paste_on_modifier_release: true,
             quickpaste_scroll_sound: true,
             quickpaste_scroll_sound_path: "sounds/roll.mp3".to_string(),
             quickpaste_window_width: 300,
             quickpaste_window_height: 400,
-
-            ai_translation_enabled: false,
-            ai_api_key: String::new(),
-            ai_model: "Qwen/Qwen2-7B-Instruct".to_string(),
-            ai_base_url: "https://api.siliconflow.cn/v1".to_string(),
-            ai_target_language: "auto".to_string(),
-            ai_translate_on_copy: false,
-            ai_translate_on_paste: true,
-            ai_translation_prompt: "请将以下文本翻译成{target_language}，严格保持原文的所有格式、换行符、段落结构和空白字符，只返回翻译结果，不要添加任何解释或修改格式：".to_string(),
-            ai_input_speed: 50,
-            ai_newline_mode: "auto".to_string(),
-            ai_output_mode: "stream".to_string(),
 
             mouse_middle_button_enabled: false,
             mouse_middle_button_modifier: "None".to_string(),
@@ -315,9 +270,6 @@ impl Default for AppSettings {
             show_list_index: true,
             show_badges: true,
             show_source_icon: true,
-            update_check_interval: "daily".to_string(),
-            disable_update_popup: false,
-            include_beta_updates: None,
 
             hotkeys_enabled: true,
             navigate_up_shortcut: "ArrowUp".to_string(),
@@ -337,23 +289,6 @@ impl Default for AppSettings {
 
             custom_storage_path: None,
             use_custom_storage: false,
-
-            webdav_enabled: false,
-            webdav_url: String::new(),
-            webdav_username: String::new(),
-            webdav_password: String::new(),
-            webdav_root_path: "quickclipboard".to_string(),
-            webdav_auto_push: false,
-            webdav_push_delay_secs: 10,
-            webdav_auto_pull: false,
-            webdav_auto_pull_on_window_show: false,
-            webdav_pull_interval_secs: 30,
-            webdav_push_shortcut: String::new(),
-            webdav_pull_shortcut: String::new(),
-            webdav_sync_clipboard: true,
-            webdav_sync_favorites: true,
-            webdav_sync_images: false,
-            sync_transfer_active_mode: "webdav".to_string(),
 
         }
     }

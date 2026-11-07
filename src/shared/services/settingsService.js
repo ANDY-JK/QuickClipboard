@@ -48,12 +48,14 @@ export const defaultSettings = {
   autoRowMaxLines: 18,
   fileDisplayMode: 'detailed', 
   cardSpacing: 8, 
+
+  // 扩展设置
+  extensionsEnabled: true,
   
   // 快捷键设置
   toggleShortcut: 'Shift+Space',
   openSettingsShortcut: '',
   quickpasteShortcut: 'Ctrl+`',
-  transferShelfCreateShortcut: '',
   numberShortcuts: true,
   numberShortcutsModifier: 'Ctrl',
   
@@ -100,9 +102,6 @@ export const defaultSettings = {
   showListIndex: true,
   showBadges: true,
   showSourceIcon: true,
-  updateCheckInterval: 'daily',
-  disableUpdatePopup: false,
-  includeBetaUpdates: null,
   
   // 音效设置
   soundEnabled: true,
@@ -123,19 +122,8 @@ export const defaultSettings = {
   quickpasteScrollSound: true,
   quickpasteScrollSoundPath: 'sounds/roll.mp3',
   
-  // AI 配置
-  aiTranslationEnabled: false,
-  aiApiKey: '',
-  aiModel: 'Qwen/Qwen2-7B-Instruct',
-  aiBaseUrl: 'https://api.siliconflow.cn/v1',
-  aiTargetLanguage: 'auto',
-  aiTranslateOnCopy: false,
-  aiTranslateOnPaste: true,
-  aiTranslationPrompt: '请将以下文本翻译成{target_language}，严格保持原文的所有格式、换行符、段落结构和空白字符，只返回翻译结果，不要添加任何解释或修改格式：',
-  aiInputSpeed: 50,
-  aiNewlineMode: 'auto',
-  aiOutputMode: 'stream',
-  
+  // AI 配置已随功能移除，后端 AppSettings 无对应字段，不再提供默认值。
+
   // 鼠标设置
   mouseMiddleButtonEnabled: false,
   mouseMiddleButtonModifier: 'None',
@@ -155,23 +143,9 @@ export const defaultSettings = {
   customStoragePath: null,
   useCustomStorage: false,
 
-  // WebDAV Sync 设置
-  webdavEnabled: false,
-  webdavUrl: '',
-  webdavUsername: '',
-  webdavPassword: '',
-  webdavRootPath: 'quickclipboard',
-  webdavAutoPush: false,
-  webdavPushDelaySecs: 10,
-  webdavAutoPull: false,
-  webdavAutoPullOnWindowShow: false,
-  webdavPullIntervalSecs: 30,
-  webdavPushShortcut: '',
-  webdavPullShortcut: '',
-  webdavSyncClipboard: true,
-  webdavSyncFavorites: true,
-  webdavSyncImages: false,
-  syncTransferActiveMode: 'webdav',
+  // deprecated: WebDAV 同步 / 传输同步功能已移除，以下字段无任何消费方。
+  // 旧配置文件里可能仍存在这些键，会随 savedSettings 原样回读（后端 serde 忽略未知字段），
+  // 因此不再提供默认值，仅保留此说明避免误判为遗漏。
 
 }
 

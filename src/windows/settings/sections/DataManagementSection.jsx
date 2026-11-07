@@ -1,4 +1,4 @@
-import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+import '@shared/styles/tabler-icons-subset.css';
 import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -7,13 +7,15 @@ import SettingItem from '../components/SettingItem';
 import Button from '@shared/components/ui/Button';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { openPath } from '@tauri-apps/plugin-opener';
-import { getCurrentStoragePath, getDefaultStoragePath, changeStoragePath, resetStoragePathToDefault, exportDataZip, importDataZip, resetAllData, checkTargetHasData, listBackups } from '@shared/api/dataManagement';
-import { showError, showMessage, showConfirm } from '@shared/utils/dialog';
+import { getCurrentStoragePath, getDefaultStoragePath, changeStoragePath, resetStoragePathToDefault, exportDataZip, importDataZip, resetAllData, checkTargetHasData, listBackups, cleanupOrphanImages, compactDatabase } from '@shared/api/dataManagement';
+import { showError, showMessage, showConfirm, showWarning } from '@shared/utils/dialog';
 import { reloadAllWindows } from '@shared/api/window';
 import { resetSettingsToDefault } from '@shared/api/settings';
 import { isPortableMode } from '@shared/api/system';
 import { clearClipboardHistory } from '@shared/api/clipboard';
+import { cleanupThumbnailCache } from '@shared/api/imageThumbnail';
 import { formatUserMessage } from '@shared/utils/userMessages';
+import { isDatabaseMaintenanceError } from '@shared/utils/databaseMaintenance';
 function DataManagementSection() {
   const {
     t
@@ -239,6 +241,125 @@ function DataManagementSection() {
     }
   };
 
+  const handleCleanupThumbnails = async () => {
+    try {
+      setBusyText(t('settings.dataManagement.overlayCleaningThumbnails'));
+      setBusy(true);
+      const stats = await cleanupThumbnailCache();
+      const beforeFiles = stats.totalFiles ?? 0;
+      const beforeBytes = stats.totalBytes ?? 0;
+      const removedFiles = stats.removedFiles ?? 0;
+      const removedBytes = stats.removedBytes ?? 0;
+      if (removedFiles === 0) {
+        await showMessage(t('settings.dataManagement.thumbnailCleanupNothing', {
+          files: beforeFiles,
+          size: formatSize(beforeBytes)
+        }));
+      } else {
+        await showMessage(t('settings.dataManagement.thumbnailCleanupSuccess', {
+          beforeFiles,
+          beforeSize: formatSize(beforeBytes),
+          removedFiles,
+          removedSize: formatSize(removedBytes),
+          afterFiles: Math.max(0, beforeFiles - removedFiles),
+          afterSize: formatSize(Math.max(0, beforeBytes - removedBytes))
+        }));
+      }
+    } catch (e) {
+      await showError(t('settings.dataManagement.thumbnailCleanupFailed', { message: messageOf(e) }));
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  };
+
+  const handleCleanupOrphanImages = async () => {
+    try {
+      setBusyText(t('settings.dataManagement.overlayCleaningOrphanImages'));
+      setBusy(true);
+      const stats = await cleanupOrphanImages();
+      const scanned = stats.scannedFiles ?? 0;
+      const removedImages = stats.removedClipboardImages ?? 0;
+      const removedThumbnails = stats.removedThumbnailFiles ?? 0;
+      const removedBytes = stats.removedBytes ?? 0;
+      const failedDeletes = stats.failedDeletes ?? 0;
+      const skipped = stats.skippedUserFiles ?? 0;
+      const removedTotal = removedImages + removedThumbnails;
+
+      if (removedTotal === 0 && failedDeletes === 0) {
+        await showMessage(t('settings.dataManagement.orphanImagesNothing', {
+          scanned,
+          skipped
+        }));
+        return;
+      }
+
+      const truncatedHint = stats.truncated ? `\n${t('settings.dataManagement.orphanImagesTruncated')}` : '';
+      const params = {
+        scanned,
+        removedImages,
+        removedThumbnails,
+        removedSize: formatSize(removedBytes),
+        failedDeletes,
+        skipped
+      };
+      if (failedDeletes > 0) {
+        await showWarning(`${t('settings.dataManagement.orphanImagesPartial', params)}${truncatedHint}`);
+      } else {
+        await showMessage(`${t('settings.dataManagement.orphanImagesSuccess', params)}${truncatedHint}`);
+      }
+    } catch (e) {
+      if (isDatabaseMaintenanceError(e)) {
+        await showMessage(t('settings.dataManagement.compactBusy'));
+      } else {
+        await showError(t('settings.dataManagement.orphanImagesFailed', { message: messageOf(e) }));
+      }
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  };
+
+  const handleCompactDatabase = async () => {
+    const confirmed = await showConfirm(t('settings.dataManagement.compactConfirm'));
+    if (!confirmed) return;
+
+    try {
+      setBusyText(t('settings.dataManagement.overlayCompacting'));
+      setBusy(true);
+      const stats = await compactDatabase();
+      const beforeBytes = stats.beforeBytes ?? 0;
+      const afterBytes = stats.afterBytes ?? 0;
+      const savedBytes = stats.savedBytes ?? Math.max(0, beforeBytes - afterBytes);
+
+      if (savedBytes <= 0) {
+        await showMessage(t('settings.dataManagement.compactNothing', {
+          size: formatSize(afterBytes),
+          vacuum: stats.autoVacuumAfter ?? '-'
+        }));
+      } else {
+        await showMessage(t('settings.dataManagement.compactSuccess', {
+          beforeSize: formatSize(beforeBytes),
+          afterSize: formatSize(afterBytes),
+          savedSize: formatSize(savedBytes),
+          vacuumBefore: stats.autoVacuumBefore ?? '-',
+          vacuumAfter: stats.autoVacuumAfter ?? '-',
+          items: stats.clipboardItems ?? 0,
+          favorites: stats.favoriteItems ?? 0
+        }));
+      }
+    } catch (e) {
+      if (isDatabaseMaintenanceError(e)) {
+        await showMessage(t('settings.dataManagement.compactBusy'));
+      } else {
+        await showError(t('settings.dataManagement.compactFailed', { message: messageOf(e) }));
+      }
+    } finally {
+      setBusy(false);
+      setBusyText('');
+    }
+  };
+
   const handleResetSettings = async () => {
     const ok = await showConfirm(t('settings.dataManagement.resetConfirm'));
     if (!ok) return;
@@ -352,6 +473,24 @@ function DataManagementSection() {
 
       {/* 数据清理 */}
       <SettingsSection title={t('settings.dataManagement.cleanupTitle')} description={t('settings.dataManagement.cleanupDesc')}>
+        <SettingItem label={t('settings.dataManagement.cleanupThumbnails')} description={t('settings.dataManagement.cleanupThumbnailsDesc')}>
+          <Button onClick={handleCleanupThumbnails} disabled={busy} variant="secondary" icon={<i className="ti ti-photo-off"></i>}>
+            {t('settings.dataManagement.cleanupThumbnailsButton')}
+          </Button>
+        </SettingItem>
+
+        <SettingItem label={t('settings.dataManagement.cleanupOrphanImages')} description={t('settings.dataManagement.cleanupOrphanImagesDesc')}>
+          <Button onClick={handleCleanupOrphanImages} disabled={busy} variant="secondary" icon={<i className="ti ti-trash-x"></i>}>
+            {t('settings.dataManagement.cleanupOrphanImagesButton')}
+          </Button>
+        </SettingItem>
+
+        <SettingItem label={t('settings.dataManagement.compactDatabase')} description={t('settings.dataManagement.compactDatabaseDesc')}>
+          <Button onClick={handleCompactDatabase} disabled={busy} variant="secondary" icon={<i className="ti ti-database"></i>}>
+            {t('settings.dataManagement.compactDatabaseButton')}
+          </Button>
+        </SettingItem>
+
         <SettingItem label={t('settings.dataManagement.clearHistory')} description={t('settings.dataManagement.clearHistoryDesc')}>
           <Button onClick={handleClearHistory} variant="danger" icon={<i className="ti ti-trash"></i>}>
             {t('settings.dataManagement.clearButton')}

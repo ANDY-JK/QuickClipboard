@@ -56,38 +56,61 @@ pub fn dm_check_target_has_data(payload: CheckTargetPayload) -> Result<crate::se
 }
 
 #[tauri::command]
-pub fn dm_change_storage_path(app: tauri::AppHandle, payload: ChangePathPayload) -> Result<String, String> {
-    let path = std::path::PathBuf::from(payload.new_path);
-    let new_dir = crate::services::data_management::change_storage_dir(path, &payload.mode)?;
+pub async fn dm_change_storage_path(app: tauri::AppHandle, payload: ChangePathPayload) -> Result<String, String> {
+    // 迁移存储目录涉及全量文件复制/移动，放到阻塞线程
+    let _ = app;
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let path = std::path::PathBuf::from(payload.new_path);
+        let new_dir = crate::services::data_management::change_storage_dir(path, &payload.mode)?;
 
-    Ok(new_dir.to_string_lossy().to_string())
+        Ok(new_dir.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 #[tauri::command]
-pub fn dm_reset_storage_path_to_default(app: tauri::AppHandle, payload: ResetPathPayload) -> Result<String, String> {
-    let dir = crate::services::data_management::reset_storage_dir_to_default(&payload.mode)?;
+pub async fn dm_reset_storage_path_to_default(app: tauri::AppHandle, payload: ResetPathPayload) -> Result<String, String> {
+    let _ = app;
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let dir = crate::services::data_management::reset_storage_dir_to_default(&payload.mode)?;
 
-    Ok(dir.to_string_lossy().to_string())
+        Ok(dir.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 #[tauri::command]
-pub fn dm_export_data_zip(payload: ExportPayload) -> Result<String, String> {
-    let path = std::path::PathBuf::from(payload.target_path);
-    let out = crate::services::data_management::export_data_zip(path)?;
-    Ok(out.to_string_lossy().to_string())
+pub async fn dm_export_data_zip(payload: ExportPayload) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let path = std::path::PathBuf::from(payload.target_path);
+        let out = crate::services::data_management::export_data_zip(path)?;
+        Ok(out.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 #[tauri::command]
-pub fn dm_import_data_zip(payload: ImportPayload) -> Result<String, String> {
-    let zip = std::path::PathBuf::from(payload.zip_path);
-    let result = crate::services::data_management::import_data_zip(zip, &payload.mode)?;
-    Ok(result)
+pub async fn dm_import_data_zip(payload: ImportPayload) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let zip = std::path::PathBuf::from(payload.zip_path);
+        crate::services::data_management::import_data_zip(zip, &payload.mode)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 #[tauri::command]
-pub fn dm_reset_all_data(app: tauri::AppHandle) -> Result<String, String> {
-    let path = crate::services::data_management::reset_all_data()?;
-    Ok(path)
+pub async fn dm_reset_all_data(app: tauri::AppHandle) -> Result<String, String> {
+    let _ = app;
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let path = crate::services::data_management::reset_all_data()?;
+        Ok(path)
+    })
+    .await
+    .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
 #[tauri::command]

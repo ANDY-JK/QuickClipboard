@@ -1,6 +1,16 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useSnapshot } from 'valtio'
 import { navigationStore } from '@shared/store/navigationStore'
+function findFirstLoadedIndex(items) {
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    if (item && !item._isPlaceholder) {
+      return index
+    }
+  }
+  return -1
+}
+
 export function useNavigation({ 
   items = [], 
   virtuosoRef = null,
@@ -9,6 +19,10 @@ export function useNavigation({
 }) {
   const snap = useSnapshot(navigationStore)
   const firstItemId = items[0]?.id
+  // items 是每次渲染新建的稀疏数组，回调按 length 做了 memo；
+  // 用 ref 持有最新引用，避免命中缓存时读到旧数组（加载完成后仍判定“首项未加载”）。
+  const itemsRef = useRef(items)
+  itemsRef.current = items
   const lastHoverIndexRef = useRef(-1)
   const keyboardNavigationTimeoutRef = useRef(null)
   const scrollTimeoutRef = useRef(null)
@@ -25,7 +39,9 @@ export function useNavigation({
     
     let newIndex
     if (snap.currentSelectedIndex === -1) {
-      newIndex = items.length - 1
+      // 未选中时不再跳到最后一项（那通常是未加载的占位区），选中第一个已加载项。
+      const firstLoadedIndex = findFirstLoadedIndex(itemsRef.current)
+      newIndex = firstLoadedIndex === -1 ? 0 : firstLoadedIndex
     } else if (snap.currentSelectedIndex <= 0) {
       newIndex = items.length - 1
     } else {
@@ -193,8 +209,9 @@ export function useNavigation({
     }
 
     if (snap.currentSelectedIndex === -1) {
-      if (!items[0]?._isPlaceholder) {
-        navigationStore.setSelectedIndex(0)
+      const firstLoadedIndex = findFirstLoadedIndex(items)
+      if (firstLoadedIndex !== -1) {
+        navigationStore.setSelectedIndex(firstLoadedIndex)
       }
       return
     }

@@ -8,7 +8,15 @@ use std::path::Path;
 use regex::Regex;
 use sha2::{Sha256, Digest};
 use serde::{Serialize, Deserialize};
-use crate::utils::cf_html::normalize_clipboard_html;
+use crate::utils::html_sanitizer::{
+    limit_html_bytes, sanitize_clipboard_document, sanitize_raw_html_formats,
+    strip_oversized_data_images,
+};
+
+// html_content 与 raw "HTML Format" 行的体积上限。
+// 取 8 MiB：单张截图内嵌的 data:image base64 常见在 3~4 MB，若按 1~2 MiB 截断会把图片截坏；
+// 超限时只在标签边界截断前段，保留完整结构与内容，不整条丢弃、不退化成纯文本。
+const MAX_STORED_HTML_BYTES: usize = 8 * 1024 * 1024;
 
 
 // 文件信息结构
@@ -47,6 +55,10 @@ pub struct ProcessedContent {
 // 处理剪贴板内容，将原始数据转换为可存储的格式
 pub fn process_content(content: ClipboardContent) -> Result<ProcessedContent, String> {
     let (source_app, source_icon_hash) = get_source_info();
+
+    // raw 的 "HTML Format" 行优先于 html_content 写回，这里统一清洗，避免绕过净化
+    let mut raw_formats = content.raw_formats;
+    sanitize_raw_html_formats(&mut raw_formats, MAX_STORED_HTML_BYTES);
     
     match content.content_type {
         // 纯文本处理
@@ -76,14 +88,19 @@ pub fn process_content(content: ClipboardContent) -> Result<ProcessedContent, St
                 image_id,
                 source_app,
                 source_icon_hash,
-                raw_formats: content.raw_formats,
+                raw_formats,
             })
         }
         
             // 富文本处理（HTML）
             CaptureType::RichText => {
                 let raw_html = content.html.ok_or("HTML内容为空")?;
-                let html = normalize_clipboard_html(&raw_html);
+                // 只剥 CF_HTML 头、保留 <head>：html_content 与 raw 走同一套清洗，
+                // 若按 StartFragment/EndFragment 只取 fragment，<style> 会整块丢失
+                let html = sanitize_clipboard_document(&raw_html);
+                // 单张超大内嵌图先单独剔除，避免它把整条文档推到全局截断点
+                let html = strip_oversized_data_images(&html, MAX_STORED_HTML_BYTES);
+                let html = limit_html_bytes(&html, MAX_STORED_HTML_BYTES);
                 let text = content.text.unwrap_or_else(|| strip_html(&html));
                 
                 let mut ct = ContentType::new("rich_text");
@@ -95,6 +112,7 @@ pub fn process_content(content: ClipboardContent) -> Result<ProcessedContent, St
                 }
                 
                 let (processed_html, image_ids) = process_html_images(&html)?;
+                let processed_html = limit_html_bytes(&processed_html, MAX_STORED_HTML_BYTES);
                 let clipboard_image_id = content
                     .image_path
                     .as_deref()
@@ -117,7 +135,7 @@ pub fn process_content(content: ClipboardContent) -> Result<ProcessedContent, St
                 image_id,
                 source_app,
                 source_icon_hash,
-                raw_formats: content.raw_formats,
+                raw_formats,
             })
         }
         
@@ -153,7 +171,7 @@ pub fn process_content(content: ClipboardContent) -> Result<ProcessedContent, St
                 image_id,
                 source_app,
                 source_icon_hash,
-                raw_formats: content.raw_formats,
+                raw_formats,
             })
         }
     }
@@ -277,10 +295,13 @@ fn contains_links(text: &str) -> bool {
 
 // 从HTML中提取纯文本
 fn strip_html(html: &str) -> String {
+    // html_content 现在保留 <head>/<style>，提取纯文本时先把样式表整块去掉，避免 CSS 混进正文
+    let style_regex = Regex::new(r"(?is)<(style|head)\b[^>]*>.*?</(style|head)>").unwrap();
     let tag_regex = Regex::new(r"<[^>]*>").unwrap();
     let entity_regex = Regex::new(r"&[a-zA-Z]+;").unwrap();
     
-    let mut text = tag_regex.replace_all(html, " ").to_string();
+    let mut text = style_regex.replace_all(html, " ").to_string();
+    text = tag_regex.replace_all(&text, " ").to_string();
     text = entity_regex.replace_all(&text, " ").to_string();
     
     // 清理多余的空白
@@ -393,7 +414,7 @@ fn fetch_image_data(src: &str) -> Result<Vec<u8>, String> {
     };
     
     if src.starts_with("http://") || src.starts_with("https://") {
-        fetch_remote_image(&src)
+        Err("离线版不支持抓取网络图片".to_string())
     } else if src.starts_with("data:image/") {
         parse_data_url(&src)
     } else if src.starts_with("file://") {
@@ -405,30 +426,6 @@ fn fetch_image_data(src: &str) -> Result<Vec<u8>, String> {
     } else {
         Err(format!("不支持的图片源或文件不存在: {}", src))
     }
-}
-
-// 下载网络图片
-fn fetch_remote_image(url: &str) -> Result<Vec<u8>, String> {
-    use reqwest::blocking::Client;
-    use std::time::Duration;
-    
-    let client = Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
-    
-    let response = client.get(url)
-        .send()
-        .map_err(|e| format!("下载图片失败: {}", e))?;
-    
-    if !response.status().is_success() {
-        return Err(format!("下载图片失败: HTTP {}", response.status()));
-    }
-    
-    let bytes = response.bytes()
-        .map_err(|e| format!("读取图片数据失败: {}", e))?;
-    
-    Ok(bytes.to_vec())
 }
 
 // 解析Data URL
@@ -527,6 +524,128 @@ mod tests {
         );
 
         assert_eq!(merged, vec!["region_snapshot", "inline_a"]);
+    }
+
+    use super::{process_content, ClipboardContent, CaptureType, ClipboardDataSeed, MAX_STORED_HTML_BYTES};
+
+    // 不含 data:image（避免测试写入真实 clipboard_images 目录）；外链图片离线不会被下载
+    const SAMPLE_BODY: &str = r#"<p style="color: rgb(255, 0, 0); font-weight: bold; font-size: 18px; font-family: 'Microsoft YaHei'; line-height: 1.8; text-align: center; position: fixed; top: 0; z-index: 9999">第一段 <span style="font-style: italic; text-decoration: underline; background-color: #ffff00">斜体下划线</span><br>第二行 &amp; 实体</p><a href="https://example.com/a?b=1&amp;c=2" onclick="alert(1)">安全链接</a><a href="javascript:alert(1)">危险链接</a><a href="&#106;avascript:alert(1)">实体混淆</a><img src="https://example.com/x.png" onerror="alert(1)" width="40" height="40"><div style="white-space: pre-wrap; margin-left: 12px">保留空白</div><iframe src="https://evil.example"></iframe><object data="x"></object><script>alert(2)</script>"#;
+
+    // 采集入库核对：html_content 与 raw "HTML Format" 行都应已净化，且同时保留 <style> 与格式
+    #[test]
+    fn process_content_sanitizes_html_and_raw_html_format() {
+        let word_style = r#"p.MsoNormal {font-family:"Microsoft YaHei"; font-size:11.0pt; line-height:1.5} @page {margin: 2cm;} p.Bad {position:fixed; z-index:9999} @import url("http://blocked.example/x.css"); p.Local {background:url(file:///C:/Users/x/a.png)} p.Rel {background:url(./img/a.png)} p.Remote {background:url(http://evil/a.png)}"#;
+        let doc = format!(
+            "<!DOCTYPE html>\n<html><head><style>{}</style><script>alert(0)</script></head><body>\n<!--StartFragment-->{}\n<!--EndFragment-->\n</body></html>",
+            word_style, SAMPLE_BODY
+        );
+        let header = "Version:0.9\r\nStartHTML:0000000000\r\nEndHTML:0000000000\r\nStartFragment:0000000000\r\nEndFragment:0000000000\r\n";
+        let start_html = header.len();
+        let end_html = start_html + doc.len();
+        let start_fragment = start_html + doc.find("<!--StartFragment-->").unwrap();
+        let end_fragment = start_html + doc.find("<!--EndFragment-->").unwrap();
+        let cf_html = format!(
+            "Version:0.9\r\nStartHTML:{:010}\r\nEndHTML:{:010}\r\nStartFragment:{:010}\r\nEndFragment:{:010}\r\n{}",
+            start_html, end_html, start_fragment, end_fragment, doc
+        );
+
+        let content = ClipboardContent {
+            content_type: CaptureType::RichText,
+            text: Some("第一段\n第二行".to_string()),
+            html: Some(doc),
+            files: None,
+            image_path: None,
+            raw_formats: vec![ClipboardDataSeed {
+                format_name: "HTML Format".to_string(),
+                raw_data: cf_html.into_bytes(),
+                is_primary: true,
+                format_order: 0,
+            }],
+        };
+
+        let processed = process_content(content).expect("process_content 失败");
+        let html = processed.html_content.expect("html_content 为空");
+
+        for keep in [
+            "<style>",
+            "p.MsoNormal",
+            "line-height:1.5",
+            "<br",
+            "<img src=\"https://example.com/x.png\"",
+            "href=\"https://example.com/a?b=1&amp;c=2\"",
+            "color: rgb(255, 0, 0)",
+            "font-weight: bold",
+            "font-size: 18px",
+            "font-family: 'Microsoft YaHei'",
+            "line-height: 1.8",
+            "text-align: center",
+            "background-color: #ffff00",
+            "text-decoration: underline",
+            "font-style: italic",
+            "white-space: pre-wrap",
+            "margin-left: 12px",
+            // 保真优先：本地 file:/// 与相对路径、http 外链图片的 url() 都要保留
+            "background:url(file:///C:/Users/x/a.png)",
+            "background:url(./img/a.png)",
+            "background:url(http://evil/a.png)",
+        ] {
+            assert!(html.contains(keep), "html_content 缺少格式属性: {}", keep);
+        }
+        for forbidden in [
+            "<script", "<iframe", "<object", "onerror=", "onclick=",
+            "@import", "http://blocked.example", "expression(", "alert(",
+            "javascript:", "vbscript:", "position:", "z-index:", "top:",
+        ] {
+            assert!(!html.contains(forbidden), "html_content 危险内容未清除: {}", forbidden);
+        }
+        assert!(html.len() <= MAX_STORED_HTML_BYTES, "html_content 超过体积上限");
+
+        let raw = processed
+            .raw_formats
+            .iter()
+            .find(|item| item.format_name == "HTML Format")
+            .expect("raw HTML Format 行被丢弃");
+        assert!(raw.raw_data.len() <= MAX_STORED_HTML_BYTES, "raw 行超过体积上限");
+        let raw_text = String::from_utf8(raw.raw_data.clone()).unwrap();
+
+        assert!(raw_text.contains("Version:0.9"));
+        // html_content 与 raw 必须同时保留清洗后的 <style>（留 MsoNormal/行距，清危险声明）
+        assert!(raw_text.contains("<style>"), "raw 缺少 style: {}", raw_text);
+        assert!(raw_text.contains("p.MsoNormal"), "raw 缺少 MsoNormal: {}", raw_text);
+        assert!(raw_text.contains("line-height:1.5"), "raw 缺少 line-height: {}", raw_text);
+        // raw 行同样保留本地/相对/外链 url()，与 html_content 口径一致
+        assert!(raw_text.contains("background:url(file:///C:/Users/x/a.png)"), "raw 缺少 file url: {}", raw_text);
+        assert!(raw_text.contains("background:url(./img/a.png)"), "raw 缺少相对路径 url: {}", raw_text);
+        assert!(raw_text.contains("background:url(http://evil/a.png)"), "raw 缺少外链 url: {}", raw_text);
+        assert!(raw_text.contains("<br"));
+        assert!(raw_text.contains("href=\"https://example.com/a?b=1&amp;c=2\""));
+        for forbidden in [
+            "<script", "<object", "onerror=", "javascript:",
+            "@import", "http://blocked.example", "position:", "z-index:",
+        ] {
+            assert!(!raw_text.contains(forbidden), "raw 危险内容未清除: {}", forbidden);
+        }
+
+        let parse_offset = |key: &str| -> usize {
+            let idx = raw_text.find(key).unwrap() + key.len();
+            raw_text[idx..].chars().take(10).collect::<String>().parse().unwrap()
+        };
+        let start_html = parse_offset("StartHTML:");
+        let start_fragment = parse_offset("StartFragment:");
+        let end_fragment = parse_offset("EndFragment:");
+        assert_eq!(&raw_text[start_html..start_html + 1], "<");
+        assert_eq!(
+            &raw_text[start_fragment..start_fragment + "<!--StartFragment-->".len()],
+            "<!--StartFragment-->"
+        );
+        assert_eq!(
+            &raw_text[end_fragment..end_fragment + "<!--EndFragment-->".len()],
+            "<!--EndFragment-->"
+        );
+
+        let out = std::env::temp_dir().join("qc_processor_sanitized.txt");
+        std::fs::write(&out, html.as_bytes()).unwrap();
+        eprintln!("html_content {} 字节, raw {} 字节 -> {:?}", html.len(), raw.raw_data.len(), out);
     }
 }
 

@@ -1,6 +1,6 @@
 use super::processor::ProcessedContent;
 use crate::services::database::connection::with_connection;
-use crate::services::database::clipboard::limit_clipboard_history;
+use crate::services::database::clipboard::{compute_content_hash, limit_clipboard_history};
 use crate::services::database::ClipboardDataSeed;
 use crate::services::settings::get_settings;
 use rusqlite::params;
@@ -38,11 +38,18 @@ pub fn store_clipboard_item(content: ProcessedContent) -> Result<i64, String> {
     let result = with_connection(|conn| {
         let tx = conn.unchecked_transaction()?;
         let now = chrono::Local::now().timestamp();
+        // 与历史回填共用同一哈希实现，避免重复计算也避免口径漂移
+        let content_hash = compute_content_hash(&content.content, &content.content_type);
 
-        if let Some(duplicate) = find_duplicate_item(&content, &tx)? {
-            let clipboard_id = refresh_duplicate_item(&content, &tx, duplicate, now)?;
-            tx.commit()?;
-            return Ok(clipboard_id);
+        // ignore_duplicates=true 保持历史去重；false 时跳过去重直接插入。
+        // content_hash 无论是否去重都照常写入，开关重新打开后仍可命中老数据。
+        if settings.ignore_duplicates {
+            if let Some(duplicate) = find_duplicate_item(&content, &content_hash, &tx)? {
+                let clipboard_id =
+                    refresh_duplicate_item(&content, &content_hash, &tx, duplicate, now)?;
+                tx.commit()?;
+                return Ok(clipboard_id);
+            }
         }
 
         let new_order = next_item_order(&tx, 0, None)?;
@@ -50,8 +57,8 @@ pub fn store_clipboard_item(content: ProcessedContent) -> Result<i64, String> {
         let uuid = Uuid::new_v4().to_string();
         
         tx.execute(
-            "INSERT INTO clipboard (content, html_content, content_type, image_id, item_order, source_app, source_icon_hash, char_count, uuid, source_device_id, is_remote, created_at, updated_at) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO clipboard (content, html_content, content_type, image_id, item_order, source_app, source_icon_hash, char_count, content_hash, uuid, source_device_id, is_remote, created_at, updated_at) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 &content.content,
                 content.html_content.as_deref(),
@@ -61,6 +68,7 @@ pub fn store_clipboard_item(content: ProcessedContent) -> Result<i64, String> {
                 content.source_app.as_deref(),
                 content.source_icon_hash.as_deref(),
                 char_count,
+                &content_hash,
                 uuid,
                 Option::<&str>::None,
                 0,
@@ -89,19 +97,25 @@ pub fn store_clipboard_item(content: ProcessedContent) -> Result<i64, String> {
     }
 }
 
-// 智能去重
+// 智能去重：先用 content_hash 索引精确命中，再对少量候选做语义校验
 fn find_duplicate_item(
     content: &ProcessedContent,
+    content_hash: &str,
     conn: &rusqlite::Connection,
 ) -> Result<Option<DuplicateClipboardItem>, rusqlite::Error> {
+    if content_hash.is_empty() {
+        return Ok(None);
+    }
+
     let mut stmt = conn.prepare(
         "SELECT id, content, content_type, is_pinned
          FROM clipboard 
+         WHERE content_hash = ?1
          ORDER BY updated_at DESC, id DESC
-         LIMIT 100"
+         LIMIT 5"
     )?;
     
-    let recent_items = stmt.query_map([], |row| {
+    let recent_items = stmt.query_map(params![content_hash], |row| {
         Ok((
             row.get::<_, i64>(0)?,      // id
             row.get::<_, String>(1)?,   // content
@@ -136,6 +150,7 @@ fn find_duplicate_item(
 
 fn refresh_duplicate_item(
     content: &ProcessedContent,
+    content_hash: &str,
     conn: &rusqlite::Connection,
     duplicate: DuplicateClipboardItem,
     now: i64,
@@ -153,8 +168,9 @@ fn refresh_duplicate_item(
              source_app = ?6,
              source_icon_hash = ?7,
              char_count = ?8,
-             updated_at = ?9
-         WHERE id = ?10",
+             content_hash = ?9,
+             updated_at = ?10
+         WHERE id = ?11",
         params![
             &content.content,
             content.html_content.as_deref(),
@@ -164,6 +180,7 @@ fn refresh_duplicate_item(
             content.source_app.as_deref(),
             content.source_icon_hash.as_deref(),
             char_count,
+            content_hash,
             now,
             duplicate.id,
         ],

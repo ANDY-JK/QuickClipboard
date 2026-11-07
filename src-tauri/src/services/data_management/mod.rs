@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::{Path, PathBuf}, time::SystemTime};
+use std::{collections::HashMap, fs, io::{Read, Write}, path::{Path, PathBuf}, time::SystemTime};
 use chrono::Local;
 use serde::Serialize;
 
@@ -286,17 +286,45 @@ pub fn import_data_zip(zip_path: PathBuf, mode: &str) -> Result<String, String> 
     fs::create_dir_all(&temp_root).map_err(|e| e.to_string())?;
     let file = fs::File::open(&zip_path).map_err(|e| format!("打开导入文件失败: {}", e))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取压缩包失败: {}", e))?;
+    const MAX_ENTRIES: usize = 50_000;
+    const MAX_ENTRY_SIZE: u64 = 512 * 1024 * 1024;
+    const MAX_TOTAL_SIZE: u64 = 4 * 1024 * 1024 * 1024;
+    if archive.len() > MAX_ENTRIES {
+        return Err(format!("压缩包条目数超过上限（{}）", MAX_ENTRIES));
+    }
+    let mut total_size: u64 = 0;
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().to_string();
-        if name.contains("..") { continue; }
-        let out_path = temp_root.join(&name);
+        // enclosed_name 会拒绝绝对路径与 .. 穿越（zip-slip）
+        let Some(rel_path) = f.enclosed_name() else {
+            return Err(format!("压缩包包含非法路径条目: {}", f.name()));
+        };
+        let entry_size = f.size();
+        if entry_size > MAX_ENTRY_SIZE {
+            return Err(format!("压缩包内单个文件超过上限: {} ({} 字节)", f.name(), entry_size));
+        }
+        let out_path = temp_root.join(&rel_path);
         if f.is_dir() {
             fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
-        } else {
-            if let Some(p) = out_path.parent() { fs::create_dir_all(p).map_err(|e| e.to_string())?; }
-            let mut out = fs::File::create(&out_path).map_err(|e| e.to_string())?;
-            std::io::copy(&mut f, &mut out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(p) = out_path.parent() { fs::create_dir_all(p).map_err(|e| e.to_string())?; }
+        let mut out = fs::File::create(&out_path).map_err(|e| e.to_string())?;
+        // 按实际写入字节计量，避免中央目录伪造 size 绕过上限（zip 炸弹）
+        let mut entry_written: u64 = 0;
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            entry_written = entry_written.saturating_add(n as u64);
+            total_size = total_size.saturating_add(n as u64);
+            if entry_written > MAX_ENTRY_SIZE {
+                return Err(format!("压缩包内单个文件超过上限: {}", f.name()));
+            }
+            if total_size > MAX_TOTAL_SIZE {
+                return Err("压缩包解压后总大小超过上限".to_string());
+            }
+            out.write_all(&buf[..n]).map_err(|e| e.to_string())?;
         }
     }
 
@@ -782,8 +810,8 @@ fn merge_clipboard_from_importdb(
     let mut query_stmt = conn.prepare(&select_sql)?;
     let mut insert_stmt = conn.prepare(
         "INSERT INTO clipboard
-         (content, html_content, content_type, image_id, is_pinned, paste_count, source_app, source_icon_hash, char_count, uuid, source_device_id, is_remote, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         (content, html_content, content_type, image_id, is_pinned, paste_count, source_app, source_icon_hash, char_count, content_hash, uuid, source_device_id, is_remote, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
     )?;
 
     let rows = query_stmt.query_map([], |row| {
@@ -825,6 +853,9 @@ fn merge_clipboard_from_importdb(
             updated_at,
         ) = row?;
 
+        let content_hash =
+            crate::services::database::clipboard::compute_content_hash(&content, &content_type);
+
         insert_stmt.execute(rusqlite::params![
             content,
             html_content,
@@ -835,6 +866,7 @@ fn merge_clipboard_from_importdb(
             source_app,
             source_icon_hash,
             char_count,
+            content_hash,
             uuid,
             source_device_id,
             is_remote,

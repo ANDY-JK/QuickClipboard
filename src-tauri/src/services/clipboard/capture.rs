@@ -23,39 +23,93 @@ pub struct ClipboardContent {
 }
 
 // 保存剪贴板图片到缓存目录
+//
+// 判重策略：先用「尺寸 + 原始 RGBA 字节」的 SHA256 指纹判断是否已存在，
+// 命中直接复用路径，避免重复 PNG 编码。该指纹仅用于图片文件命名与去重，
+// 与数据库 migration 的 content_hash（文件路径集合哈希）语义无关。
 fn save_clipboard_image(rust_image: RustImageData) -> Result<String, String> {
-    use crate::services::get_data_directory;
-    use image::{codecs::png::PngEncoder, ImageEncoder};
-    use sha2::{Digest, Sha256};
+    use crate::services::{
+        fit_dimensions, get_data_directory, image_limits, shrink_dimensions_for_bytes,
+    };
+    use image::imageops::FilterType;
 
     let images_dir = get_data_directory()?.join("clipboard_images");
     std::fs::create_dir_all(&images_dir).map_err(|e| format!("创建目录失败: {}", e))?;
 
-    let rgba_image = rust_image.to_rgba8().map_err(|e| e.to_string())?;
+    let limits = image_limits();
+    let mut rgba_image = rust_image.to_rgba8().map_err(|e| e.to_string())?;
+
+    // 先按设置上限等比缩放，避免对超大图做后续编码/写盘
     let (width, height) = (rgba_image.width(), rgba_image.height());
+    let (fit_width, fit_height) = fit_dimensions(width, height, limits.max_width, limits.max_height);
+    if (fit_width, fit_height) != (width, height) {
+        rgba_image =
+            image::imageops::resize(&rgba_image, fit_width, fit_height, FilterType::Triangle);
+    }
+
+    // 廉价指纹优先判重：不触发 PNG 压缩即可命中已缓存文件
+    let mut filename = raw_fingerprint(&rgba_image);
+    let mut final_path = images_dir.join(&filename);
+    if final_path.exists() {
+        return Ok(format!("clipboard_images/{}", filename));
+    }
+
+    let mut png_data = encode_png(&rgba_image)?;
+
+    // 编码后仍超过大小上限时，按面积比例缩小一次并重新编码
+    if let Some((shrink_width, shrink_height)) = shrink_dimensions_for_bytes(
+        rgba_image.width(),
+        rgba_image.height(),
+        png_data.len() as u64,
+        limits.max_size_bytes,
+    ) {
+        rgba_image =
+            image::imageops::resize(&rgba_image, shrink_width, shrink_height, FilterType::Triangle);
+        filename = raw_fingerprint(&rgba_image);
+        final_path = images_dir.join(&filename);
+        if final_path.exists() {
+            return Ok(format!("clipboard_images/{}", filename));
+        }
+        png_data = encode_png(&rgba_image)?;
+    }
+
+    if limits.max_size_bytes > 0 && png_data.len() as u64 > limits.max_size_bytes {
+        return Err(format!(
+            "图片超过大小上限（{}MB），已跳过保存",
+            limits.max_size_bytes / (1024 * 1024)
+        ));
+    }
+
+    std::fs::write(&final_path, &png_data).map_err(|e| e.to_string())?;
+
+    Ok(format!("clipboard_images/{}", filename))
+}
+
+fn raw_fingerprint(rgba_image: &image::RgbaImage) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(rgba_image.width().to_le_bytes());
+    hasher.update(rgba_image.height().to_le_bytes());
+    hasher.update(rgba_image.as_raw());
+    let hash = format!("{:x}", hasher.finalize());
+    format!("{}.png", &hash[..16])
+}
+
+fn encode_png(rgba_image: &image::RgbaImage) -> Result<Vec<u8>, String> {
+    use image::{codecs::png::PngEncoder, ImageEncoder};
 
     let mut png_data = Vec::new();
     let encoder = PngEncoder::new(&mut png_data);
     encoder
         .write_image(
             rgba_image.as_raw(),
-            width,
-            height,
+            rgba_image.width(),
+            rgba_image.height(),
             image::ExtendedColorType::Rgba8,
         )
         .map_err(|e| e.to_string())?;
-
-    let hash = format!("{:x}", Sha256::digest(&png_data));
-    let filename = format!("{}.png", &hash[..16]);
-    let final_path = images_dir.join(&filename);
-
-    if final_path.exists() {
-        return Ok(format!("clipboard_images/{}", filename));
-    }
-
-    std::fs::write(&final_path, &png_data).map_err(|e| e.to_string())?;
-
-    Ok(format!("clipboard_images/{}", filename))
+    Ok(png_data)
 }
 
 fn append_internal_image_raw_format(raw_formats: &mut Vec<ClipboardDataSeed>, image_path: &str) {
@@ -251,12 +305,19 @@ fn capture_primary_content(
         content.image_path = Some(path.to_string());
     } else {
         if let Ok(rust_image) = ctx.get_image() {
-            let image_path = save_clipboard_image(rust_image)?;
-            if content.text.is_none() && content.html.is_none() {
-                content.content_type = ContentType::Files;
-                content.files = Some(vec![image_path.clone()]);
+            // 图片超过上限等保存失败时降级为纯文本/HTML，不连累同一次捕获的文本内容
+            match save_clipboard_image(rust_image) {
+                Ok(image_path) => {
+                    if content.text.is_none() && content.html.is_none() {
+                        content.content_type = ContentType::Files;
+                        content.files = Some(vec![image_path.clone()]);
+                    }
+                    content.image_path = Some(image_path);
+                }
+                Err(e) => {
+                    eprintln!("保存剪贴板图片失败，已跳过图片: {}", e);
+                }
             }
-            content.image_path = Some(image_path);
         }
     }
 

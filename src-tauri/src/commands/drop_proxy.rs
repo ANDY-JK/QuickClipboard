@@ -24,11 +24,6 @@ pub fn drop_proxy_hide(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn drop_proxy_dispose(app: AppHandle) -> Result<(), String> {
-    drop_proxy::dispose_drop_proxy(&app)
-}
-
-#[tauri::command]
 pub fn drop_proxy_route_paths_at_cursor(
     app: AppHandle,
     window: WebviewWindow,

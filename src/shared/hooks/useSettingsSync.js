@@ -13,11 +13,20 @@ export function useSettingsSync() {
       try {
         unlisten = await listen('settings-changed', (event) => {
           console.log('收到设置变更事件:', event.payload)
-          
-          // 批量更新设置
+
           if (event.payload && typeof event.payload === 'object') {
-            settingsStore.updateSettings(event.payload)
-            
+            // 事件携带全量设置：先与当前 store 做浅比较，只写入真正发生变化的键，
+            // 避免每次保存都把全部设置重新赋值一遍并触发所有订阅者重渲染。
+            const updates = {}
+            for (const key of Object.keys(event.payload)) {
+              if (settingsStore[key] !== event.payload[key]) {
+                updates[key] = event.payload[key]
+              }
+            }
+            if (Object.keys(updates).length > 0) {
+              settingsStore.updateSettings(updates)
+            }
+
             if (event.payload.language !== undefined && event.payload.language !== i18n.language) {
               i18n.changeLanguage(event.payload.language)
             }
