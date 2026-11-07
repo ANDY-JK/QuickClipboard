@@ -86,8 +86,18 @@ pub fn normalize_path_for_hash(path: &str) -> String {
     normalized
 }
 
+// 判断路径中是否含有 ".." 段，用于拒绝逃逸数据目录的相对路径
+fn contains_parent_dir(path: &str) -> bool {
+    path.split(['\\', '/']).any(|segment| segment == "..")
+}
+
 // 解析存储的路径为实际绝对路径
 pub fn resolve_stored_path(stored_path: &str) -> String {
+    // 含 ".." 的输入不参与数据目录拼接，避免 join 后逃逸出数据目录
+    if contains_parent_dir(stored_path) {
+        return stored_path.to_string();
+    }
+
     let normalized_input = stored_path.replace("/", "\\");
     
     if normalized_input.starts_with("clipboard_images\\") 

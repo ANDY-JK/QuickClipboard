@@ -19,14 +19,6 @@
         }
       ]
     },
-    {
-      "identifier": "opener:allow-open-path",
-      "allow": [
-        {
-          "path": "**"
-        }
-      ]
-    },
     "notification:default",
     "core:event:allow-emit",
     "core:event:allow-listen",

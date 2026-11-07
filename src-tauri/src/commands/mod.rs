@@ -13,6 +13,7 @@ pub mod text_drag;
 pub mod thumbnail;
 pub mod storage_maintenance;
 pub mod extensions;
+pub mod path_actions;
 
 pub use clipboard::*;
 pub use favorites::*;
@@ -27,3 +28,4 @@ pub use ocr::*;
 pub use thumbnail::*;
 pub use storage_maintenance::*;
 pub use extensions::*;
+pub use path_actions::*;

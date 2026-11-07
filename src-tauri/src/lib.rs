@@ -216,6 +216,9 @@ pub fn run() {
                 commands::get_all_windows_info_cmd,
                 commands::is_portable_mode,
                 commands::get_app_version,
+                commands::open_app_data_folder,
+                commands::open_local_file,
+                commands::reveal_local_path,
                 commands::list_extensions,
                 commands::read_extension_entry,
                 commands::install_extension,
@@ -390,7 +393,9 @@ pub fn run() {
                 // 最终数据状态与同步执行一致（超出 history_limit 的旧记录终将被删除）
                 let history_limit = settings.history_limit;
                 std::thread::spawn(move || {
-                    let _ = services::database::limit_clipboard_history(history_limit);
+                    if let Err(error) = services::database::limit_clipboard_history(history_limit) {
+                        eprintln!("[startup] 历史裁剪失败: {}", error);
+                    }
                 });
                 
                 startup_diagnostics::set_startup_stage("执行 setup：初始化屏幕与输入监听");

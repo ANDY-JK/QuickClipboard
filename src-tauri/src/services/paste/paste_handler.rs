@@ -84,7 +84,9 @@ pub fn copy_favorite_item(item: &ClipboardItem, favorite_id: &str) -> Result<(),
 pub fn paste_clipboard_item_with_update(item: &ClipboardItem) -> Result<(), String> {
     let result = paste_item_internal(item, Some(item.id), None, None, true, true);
     if result.is_ok() {
-        let _ = crate::services::database::increment_paste_count(item.id);
+        if let Err(error) = crate::services::database::increment_paste_count(item.id) {
+            eprintln!("[paste] 更新剪贴板粘贴次数失败(id={}): {}", item.id, error);
+        }
         emit_paste_count_updated(item.id);
     }
     result
@@ -97,7 +99,9 @@ pub fn paste_favorite_item_with_update(
 ) -> Result<(), String> {
     let result = paste_item_internal(item, None, Some(favorite_id.to_string()), None, true, true);
     if result.is_ok() {
-        let _ = crate::services::database::increment_favorite_paste_count(favorite_id);
+        if let Err(error) = crate::services::database::increment_favorite_paste_count(favorite_id) {
+            eprintln!("[paste] 更新收藏粘贴次数失败(id={}): {}", favorite_id, error);
+        }
         emit_favorite_paste_count_updated(favorite_id);
     }
     result
@@ -110,7 +114,9 @@ pub fn paste_clipboard_item_with_format(
 ) -> Result<(), String> {
     let result = paste_item_internal(item, Some(item.id), None, action, true, false);
     if result.is_ok() {
-        let _ = crate::services::database::increment_paste_count(item.id);
+        if let Err(error) = crate::services::database::increment_paste_count(item.id) {
+            eprintln!("[paste] 更新剪贴板粘贴次数失败(id={}): {}", item.id, error);
+        }
         emit_paste_count_updated(item.id);
     }
     result
@@ -131,7 +137,9 @@ pub fn paste_favorite_item_with_format(
         false,
     );
     if result.is_ok() {
-        let _ = crate::services::database::increment_favorite_paste_count(favorite_id);
+        if let Err(error) = crate::services::database::increment_favorite_paste_count(favorite_id) {
+            eprintln!("[paste] 更新收藏粘贴次数失败(id={}): {}", favorite_id, error);
+        }
         emit_favorite_paste_count_updated(favorite_id);
     }
     result

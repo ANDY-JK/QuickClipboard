@@ -992,8 +992,14 @@ fn change_storage_dir_internal(src_dir: &Path, dst_dir: &Path, mode: &str) -> Re
     let _ = crate::services::database::connection::with_connection(|conn| {
         conn.execute_batch("PRAGMA wal_checkpoint(FULL); PRAGMA wal_checkpoint(TRUNCATE);")
     });
-    let _ = backup_full_zip(src_dir);
-    if check_target_has_data(dst_dir)?.has_data { let _ = backup_full_zip(dst_dir); }
+    if let Err(error) = backup_full_zip(src_dir) {
+        eprintln!("[storage] 迁移前备份源目录失败: {}", error);
+    }
+    if check_target_has_data(dst_dir)?.has_data {
+        if let Err(error) = backup_full_zip(dst_dir) {
+            eprintln!("[storage] 迁移前备份目标目录失败: {}", error);
+        }
+    }
 
     close_database();
 

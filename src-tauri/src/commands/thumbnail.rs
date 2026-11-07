@@ -256,7 +256,14 @@ pub async fn get_image_thumbnail(
 
     // 原图本身不超过目标长边，直接返回原图，避免无意义的重新编码
     if original_size.0.max(original_size.1) <= max_side {
-        let _ = crate::services::asset_scope::allow_file(&app, &source_str);
+        // 仅对数据目录内的原图补充授权；外部路径（剪贴板里的本地文件）已由
+        // get_clipboard_history / get_favorites_history 的 allow_files_content 授权，
+        // 这里不做任意路径授权，避免渲染层借缩略图接口放开任意文件读取。
+        if let Ok(data_dir) = get_data_directory() {
+            if source.starts_with(&data_dir) {
+                let _ = crate::services::asset_scope::allow_file(&app, &source_str);
+            }
+        }
         return Ok(ThumbnailInfo {
             path: source_str.clone(),
             original_path: source_str,

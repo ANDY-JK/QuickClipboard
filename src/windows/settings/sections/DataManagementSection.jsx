@@ -6,7 +6,7 @@ import SettingsSection from '../components/SettingsSection';
 import SettingItem from '../components/SettingItem';
 import Button from '@shared/components/ui/Button';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { openPath } from '@tauri-apps/plugin-opener';
+import { openAppDataFolder } from '@shared/api/pathActions';
 import { getCurrentStoragePath, getDefaultStoragePath, changeStoragePath, resetStoragePathToDefault, exportDataZip, importDataZip, resetAllData, checkTargetHasData, listBackups, cleanupOrphanImages, compactDatabase } from '@shared/api/dataManagement';
 import { showError, showMessage, showConfirm, showWarning } from '@shared/utils/dialog';
 import { reloadAllWindows } from '@shared/api/window';
@@ -124,9 +124,11 @@ function DataManagementSection() {
   const handleOpenStorageFolder = async () => {
     try {
       if (storagePath && typeof storagePath === 'string') {
-        await openPath(storagePath);
+        await openAppDataFolder('storage');
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('打开存储目录失败:', e);
+    }
   };
 
   const handleChangeStorageLocation = async () => {

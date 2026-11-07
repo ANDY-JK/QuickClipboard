@@ -5,7 +5,8 @@ import {
   createMenuItem,
   createSeparator,
 } from "@/plugins/context_menu/index.js";
-import { openUrl, openPath } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { openLocalFile, revealLocalPath } from "@shared/api/pathActions";
 import i18n from "@shared/i18n";
 import { extractAllLinks, normalizeUrl } from "./linkUtils";
 import { settingsStore } from "@shared/store/settingsStore";
@@ -480,7 +481,7 @@ async function handleContentTypeActions(result, item, index) {
     },
     "open-file": async () => {
       try {
-        await openPath(filePath);
+        await openLocalFile(filePath);
         toast.success(i18n.t("contextMenu.fileOpened"), TOAST_CONFIG);
       } catch (error) {
         console.error("打开文件失败:", error);
@@ -489,7 +490,7 @@ async function handleContentTypeActions(result, item, index) {
     },
     "open-location": async () => {
       try {
-        await openPath(dirPath);
+        await revealLocalPath(dirPath);
         toast.success(i18n.t("contextMenu.locationOpened"), TOAST_CONFIG);
       } catch (error) {
         console.error("打开文件位置失败:", error);

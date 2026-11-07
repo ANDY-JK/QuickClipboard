@@ -61,7 +61,10 @@ mod windows_text_drag {
         fn GetData(&self, format: *const FORMATETC) -> windows::core::Result<STGMEDIUM> {
             match self.format(format) {
                 Some(cf) if cf == CF_UNICODETEXT.0 => medium(&self.plain),
-                Some(_) => medium(self.html.as_ref().unwrap()),
+                Some(_) => match self.html.as_ref() {
+                    Some(html) => medium(html),
+                    None => Err(Error::new(DV_E_FORMATETC, "不支持的数据格式")),
+                },
                 None => Err(Error::new(DV_E_FORMATETC, "不支持的数据格式")),
             }
         }
