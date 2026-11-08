@@ -66,6 +66,7 @@
     "publisher": "MoSheng",
     "homepage": "https://github.com/mosheng1/QuickClipboard",
     "copyright": "Copyright © 2025 MoSheng. Licensed under the Apache License, Version 2.0.",
+    "licenseFile": "../LICENSE",
     "resources": {
       "../LICENSE": "LICENSE",
       "../NOTICE": "NOTICE"
