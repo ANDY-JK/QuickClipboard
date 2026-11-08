@@ -59,6 +59,8 @@ export const extensionsStore = proxy({
   extensions: [],
   // extensionId -> 错误原因（运行级）
   errors: {},
+  // 识别结果变更计数：结果缓存在模块级 Map，列表按插件筛选时靠它触发重算。
+  resultsRevision: 0,
 })
 
 // 识别结果独立于 valtio store，按 itemId 精确订阅。
@@ -87,6 +89,36 @@ export function getExtensionResults(itemId) {
   return results.get(String(itemId)) || EMPTY_RESULTS
 }
 
+function bumpResultsRevision() {
+  extensionsStore.resultsRevision += 1
+}
+
+/**
+ * 派生查询（插件筛选）：该扩展是否在 itemId 上产生了命中结果。
+ * 只读识别缓存，供列表按插件过滤使用，不改变扩展协议。
+ */
+export function isItemIdentifiedBy(extensionId, itemId) {
+  if (!extensionId) return false
+  const cached = identifyCache.get(`${extensionId}:${String(itemId)}`)
+  return Boolean(cached && cached.length > 0)
+}
+
+/**
+ * 派生查询（插件筛选）：该扩展对某条目是否仍在识别中。
+ * 未进缓存但扩展对条目适用时也视为待识别（调用方随后会触发 identifyItems）。
+ */
+export function isExtensionIdentifyPending(extensionId, item) {
+  if (!extensionId || !extensionsStore.enabled) return false
+  const itemId = String(item?.id ?? '')
+  if (!itemId) return false
+  const meta = extensionsStore.extensions.find((entry) => entry.id === extensionId)
+  if (!meta || !meta.valid || failedExtensions.has(meta.id)) return false
+  const key = `${extensionId}:${itemId}`
+  if (pendingIdentifies.has(key)) return true
+  if (identifyCache.has(key)) return false
+  return isApplicable(meta, item)
+}
+
 function notifyItem(itemId) {
   const listeners = resultSubscribers.get(itemId)
   if (!listeners) return
@@ -96,6 +128,7 @@ function notifyItem(itemId) {
 function forgetItemResult(itemId) {
   if (results.delete(itemId)) {
     notifyItem(itemId)
+    bumpResultsRevision()
   }
 }
 
@@ -104,12 +137,15 @@ function clearResults() {
   for (const itemId of Array.from(resultSubscribers.keys())) {
     notifyItem(itemId)
   }
+  bumpResultsRevision()
 }
 
 const runtimes = new Map()
 const runtimePromises = new Map()
 const failedExtensions = new Set()
 const identifyCache = new Map()
+// 正在识别的 (extensionId:itemId)，供插件筛选区分“识别中”和“无命中”。
+const pendingIdentifies = new Set()
 // (extensionId:itemId) -> itemId，用于容量淘汰时同步清理该条目的结果
 const cacheItemIds = new Map()
 const cacheRefCounts = new Map()
@@ -136,6 +172,8 @@ function cancelQueuedJobs(reason) {
   if (jobQueue.length === 0) {
     return
   }
+  // 被取消的任务不会执行 finally，这里统一清掉它们的“识别中”标记。
+  pendingIdentifies.clear()
   const queued = jobQueue.splice(0, jobQueue.length)
   for (const job of queued) {
     job.reject(createCancelError(reason))
@@ -172,6 +210,7 @@ function clearIdentifyCache() {
   identifyCache.clear()
   cacheItemIds.clear()
   cacheRefCounts.clear()
+  pendingIdentifies.clear()
 }
 
 function cacheResult(key, itemId, chips) {
@@ -566,6 +605,7 @@ export async function identifyItems(items) {
       const key = `${meta.id}:${itemId}`
       if (identifyCache.has(key)) continue
       cacheResult(key, itemId, [])
+      pendingIdentifies.add(key)
       tasks.push({ meta, item, itemId, key })
     }
   }
@@ -574,16 +614,23 @@ export async function identifyItems(items) {
     return
   }
 
+  // 任务入队后先通知一次：插件筛选视图据此从“无命中”切到“识别中”。
+  bumpResultsRevision()
+
   const taskGeneration = generation
   await Promise.all(
     tasks.map((task) =>
       enqueue(async () => {
-        const chips = await identifyOne(task.meta, task.item)
-        // 重载/停用后旧代际任务的结果不再写入缓存或发布。
-        if (taskGeneration !== generation) return
-        cacheResult(task.key, task.itemId, chips)
-        if (extensionsStore.enabled) {
-          publishItem(task.itemId)
+        try {
+          const chips = await identifyOne(task.meta, task.item)
+          // 重载/停用后旧代际任务的结果不再写入缓存或发布。
+          if (taskGeneration !== generation) return
+          cacheResult(task.key, task.itemId, chips)
+          if (extensionsStore.enabled) {
+            publishItem(task.itemId)
+          }
+        } finally {
+          pendingIdentifies.delete(task.key)
         }
       }, taskGeneration).catch((error) => {
         if (error?.code !== ERROR_CATEGORIES.ABORT) {
@@ -592,6 +639,9 @@ export async function identifyItems(items) {
       })
     )
   )
+
+  // 整批完成后再通知一次，插件筛选视图把本批命中项并入列表。
+  bumpResultsRevision()
 }
 
 let preflightPromise = null

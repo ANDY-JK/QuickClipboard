@@ -71,6 +71,8 @@
     "history": "剪贴板历史",
     "empty": "暂无剪贴板记录",
     "emptyFilter": "当前筛选无记录",
+    "emptyExtensionFilter": "该插件未匹配到记录",
+    "identifyingExtensionFilter": "正在识别插件匹配...",
     "clear": "清空历史",
     "copy": "复制",
     "paste": "粘贴",
@@ -191,7 +193,9 @@
     "file": "文件",
     "link": "链接",
     "unpasted": "未粘贴",
-    "pasted": "已粘贴"
+    "pasted": "已粘贴",
+    "extensionFilter": "插件筛选",
+    "allExtensions": "全部插件"
   },
   "sidebar": {
     "collapse": "收起",

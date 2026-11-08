@@ -7,8 +7,10 @@ import { normalizeVisibleOptionalTabs } from '@shared/constants/tabVisibility';
 import TabButton from './TabButton';
 import FilterButton from './FilterButton';
 import FilterTypeDropdown from './FilterTypeDropdown';
+import PluginFilterDropdown from './PluginFilterDropdown';
 import GroupsPopup from './GroupsPopup';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
+import { extensionsStore } from '@/extensions/host/registry';
 
 const FILTER_IDS = ['text', 'image', 'file', 'link'];
 
@@ -47,6 +49,8 @@ function TabNavigation({
   onFilterChange,
   pasteFilter = 'all',
   onPasteFilterChange,
+  extensionFilter = 'all',
+  onExtensionFilterChange,
   emojiMode,
   onEmojiModeChange,
   onGroupChange,
@@ -58,7 +62,24 @@ function TabNavigation({
     t
   } = useTranslation();
   const settings = useSnapshot(settingsStore);
+  const extensionSnap = useSnapshot(extensionsStore);
   const uiAnimationEnabled = settings.uiAnimationEnabled !== false;
+  // 插件筛选入口：只在扩展启用且有可用插件时出现，避免空位。
+  // 识别结果只存在于剪贴板条目，收藏/符号面板不展示该入口。
+  const pluginOptions = extensionSnap.enabled && extensionSnap.loaded
+    ? extensionSnap.extensions
+        .filter(meta => meta.valid && !extensionSnap.errors[meta.id])
+        .map(meta => ({
+          id: meta.id,
+          name: meta.name || meta.id,
+          detail: meta.description || meta.version || ''
+        }))
+    : [];
+  const selectedPluginId = pluginOptions.some(option => option.id === extensionFilter)
+    ? extensionFilter
+    : 'all';
+  const showPluginFilter = activeTab === 'clipboard' && pluginOptions.length > 0;
+  const handlePluginFilterChange = onExtensionFilterChange || (() => {});
   const visibleOptionalTabs = normalizeVisibleOptionalTabs(settings.visibleOptionalTabs);
   const isSidebarLayout = navigationMode === 'sidebar';
   const isCompactFiltersLayout = compactFilters && !isSidebarLayout;
@@ -433,6 +454,15 @@ function TabNavigation({
                         filtersRef.current[filter.id] = el;
                       }
                     }))}
+                    {showPluginFilter && (
+                      <PluginFilterDropdown
+                        mode="sidebar"
+                        showLabel={sidebarShowLabel}
+                        extensions={pluginOptions}
+                        selectedId={selectedPluginId}
+                        onChange={handlePluginFilterChange}
+                      />
+                    )}
                   </>
                 )
               }
@@ -626,6 +656,15 @@ function TabNavigation({
                         compact={isCompactFiltersLayout}
                         buttonRef={el => { filtersRef.current[filter.id] = el; }} />
                     ))}
+                    {showPluginFilter && (
+                      <PluginFilterDropdown
+                        mode="horizontal"
+                        compact={isCompactFiltersLayout}
+                        extensions={pluginOptions}
+                        selectedId={selectedPluginId}
+                        onChange={handlePluginFilterChange}
+                      />
+                    )}
                   </div>
                   <div
                     className="w-px h-6 shrink-0"

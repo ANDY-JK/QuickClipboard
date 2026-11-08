@@ -19,6 +19,8 @@ import {
   extensionsStore,
   initExtensions,
   identifyItems,
+  isItemIdentifiedBy,
+  isExtensionIdentifyPending,
   syncExtensionsEnabled,
 } from '@/extensions/host/registry';
 import { LIMITS } from '@/extensions/protocol';
@@ -30,7 +32,8 @@ const SELECTION_LOAD_PAGE_SIZE = 100;
 
 const ClipboardList = forwardRef(({
   onScrollStateChange,
-  onClearFilters
+  onClearFilters,
+  extensionFilter = 'all'
 }, ref) => {
   const { t } = useTranslation();
   const [scrollerElement, setScrollerElement] = useState(null);
@@ -47,9 +50,19 @@ const ClipboardList = forwardRef(({
   const onScrollStateChangeRef = useRef(onScrollStateChange);
   const snap = useSnapshot(navigationStore);
   const clipSnap = useSnapshot(clipboardStore);
+  const extensionSnap = useSnapshot(extensionsStore);
   const isMultiSelectMode = clipSnap.isMultiSelectMode;
+  const requestedExtensionId = String(extensionFilter || 'all');
+  // 只有扩展启用、已加载且该插件仍然有效时才视为生效，避免选中项被卸载后残留筛选。
+  const isExtensionFilterActive = useMemo(() => {
+    if (!extensionSnap.enabled || !extensionSnap.loaded) return false;
+    if (requestedExtensionId === 'all') return false;
+    return extensionSnap.extensions.some(
+      meta => meta.id === requestedExtensionId && meta.valid && !extensionSnap.errors[meta.id]
+    );
+  }, [extensionSnap.enabled, extensionSnap.loaded, extensionSnap.extensions, extensionSnap.errors, requestedExtensionId]);
   const settings = useSnapshot(settingsStore);
-  const showShortcut = settings.showListShortcuts !== false && !clipSnap.filter && clipSnap.contentType === 'all';
+  const showShortcut = settings.showListShortcuts !== false && !clipSnap.filter && clipSnap.contentType === 'all' && !isExtensionFilterActive;
   const showIndex = settings.showListIndex !== false;
   const selectedIdSet = useMemo(() => new Set(clipSnap.selectedEntries.map(entry => entry.id)), [clipSnap.selectedEntries]);
   const selectedOrderMap = useMemo(() => new Map(clipSnap.selectedEntries.map((entry, order) => [entry.id, order + 1])), [clipSnap.selectedEntries]);
@@ -77,15 +90,33 @@ const ClipboardList = forwardRef(({
     return entries
   }, [clipSnap.items])
 
-  // useNavigation 需要按绝对索引取项，这里用稀疏数组承载，length 仍等于 totalCount。
+  // 插件筛选视图：从已加载条目里筛出被该插件命中的项。
+  // 识别结果缓存在 registry 的模块级 Map，这里靠 resultsRevision 触发重算。
+  const extensionFilteredEntries = useMemo(() => {
+    if (!isExtensionFilterActive) return null;
+    return loadedEntries.filter(entry => isItemIdentifiedBy(requestedExtensionId, entry.id));
+  }, [isExtensionFilterActive, requestedExtensionId, loadedEntries, extensionSnap.resultsRevision]);
+
+  const viewEntries = extensionFilteredEntries || loadedEntries;
+  const viewTotalCount = isExtensionFilterActive ? viewEntries.length : clipSnap.totalCount;
+
+  const extensionFilterPending = useMemo(() => {
+    if (!isExtensionFilterActive) return false;
+    return loadedEntries.some(entry => isExtensionIdentifyPending(requestedExtensionId, entry.item));
+  }, [isExtensionFilterActive, requestedExtensionId, loadedEntries, extensionSnap.resultsRevision]);
+
+  // 插件筛选时列表是“命中项”的稠密数组；其余条件仍是后端过滤 + 稀疏索引。
   const navigationItems = useMemo(() => {
+    if (extensionFilteredEntries) {
+      return extensionFilteredEntries.slice()
+    }
     const items = []
     items.length = clipSnap.totalCount
     for (const entry of loadedEntries) {
       items[entry._index] = entry
     }
     return items
-  }, [loadedEntries, clipSnap.totalCount])
+  }, [extensionFilteredEntries, loadedEntries, clipSnap.totalCount])
 
   useEffect(() => {
     onScrollStateChangeRef.current = onScrollStateChange;
@@ -235,9 +266,13 @@ const ClipboardList = forwardRef(({
     }
     navigationStore.resetNavigation();
     onScrollStateChangeRef.current?.({ atTop: true });
-  }, [clipSnap.filter, clipSnap.contentType, clipSnap.pasteStatus, scrollerElement]);
+  }, [clipSnap.filter, clipSnap.contentType, clipSnap.pasteStatus, scrollerElement, requestedExtensionId]);
 
   const loadMissingRange = useCallback(async (startIndex, endIndex) => {
+    // 插件筛选下索引指向“命中项”视图，不再对应后端绝对位置，禁止按索引补载。
+    if (isExtensionFilterActive) {
+      return false;
+    }
     if (clipSnap.loading || clipSnap.totalCount <= 0) {
       return false;
     }
@@ -356,6 +391,10 @@ const ClipboardList = forwardRef(({
   }, [clipSnap.contentType, clipSnap.filter]);
 
   const handleItemClick = useCallback(async (item, index, event) => {
+    // 插件筛选列表是派生视图，索引不对应后端位置，多选范围加载会错位。
+    if (isExtensionFilterActive) {
+      return false;
+    }
     if (settingsStore.modifierClickMultiSelect === false) {
       return false;
     }
@@ -425,7 +464,7 @@ const ClipboardList = forwardRef(({
     }
     clipboardStore.setSelectionAnchorIndex(index);
     return true;
-  }, [loadSelectionEntries]);
+  }, [loadSelectionEntries, isExtensionFilterActive]);
 
   const handleRangeChanged = useCallback(({
     startIndex,
@@ -440,6 +479,13 @@ const ClipboardList = forwardRef(({
       endIndex
     };
 
+    if (isExtensionFilterActive) {
+      // 派生视图的索引只用于选择/导航，不回写后端加载位置。
+      clipboardStore.updateViewRange(startIndex, endIndex);
+      setVisibleRange({ startIndex, endIndex });
+      return;
+    }
+
     if (loadTimeoutRef.current) {
       clearTimeout(loadTimeoutRef.current);
     }
@@ -452,7 +498,7 @@ const ClipboardList = forwardRef(({
         console.error('加载当前剪贴板范围失败:', error);
       });
     }, SCROLL_DEBOUNCE_DELAY);
-  }, [loadMissingRange, scrollerElement]);
+  }, [loadMissingRange, scrollerElement, isExtensionFilterActive]);
 
   const itemsCount = Object.keys(clipSnap.items).length;
 
@@ -471,8 +517,6 @@ const ClipboardList = forwardRef(({
     });
   }, [clipSnap.loading, clipSnap.totalCount, itemsCount, loadMissingRange]);
 
-  const extensionSnap = useSnapshot(extensionsStore);
-
   useEffect(() => {
     if (settings.extensionsEnabled === false) {
       syncExtensionsEnabled(false);
@@ -486,6 +530,18 @@ const ClipboardList = forwardRef(({
   // 批大小按实际可见条数（含上下预渲染）计算，避免大窗口/紧凑行高时第 21 条以后没有 chip。
   useEffect(() => {
     if (!extensionSnap.enabled || !extensionSnap.loaded) {
+      return;
+    }
+
+    if (isExtensionFilterActive) {
+      // 筛选视图不依赖可见窗口：把已加载条目分批全部送识别，
+      // 结果回写后由 resultsRevision 触发筛选列表重算。
+      const items = loadedEntries.map(entry => entry.item).filter(item => item?.id);
+      for (let offset = 0; offset < items.length; offset += LIMITS.maxBatchItems) {
+        identifyItems(items.slice(offset, offset + LIMITS.maxBatchItems)).catch(error => {
+          console.warn('插件筛选识别失败:', error);
+        });
+      }
       return;
     }
 
@@ -522,6 +578,9 @@ const ClipboardList = forwardRef(({
     extensionSnap.enabled,
     extensionSnap.loaded,
     extensionSnap.revision,
+    isExtensionFilterActive,
+    requestedExtensionId,
+    loadedEntries,
     visibleRange.startIndex,
     visibleRange.endIndex,
     itemsCount,
@@ -579,6 +638,30 @@ const ClipboardList = forwardRef(({
     </div>;
   }
 
+  // 插件筛选把后端列表派生为「命中项」子集，可能出现后端仍有记录但命中为空。
+  if (isExtensionFilterActive && viewTotalCount === 0) {
+    return <div className="flex-1 bg-qc-surface overflow-hidden flex items-center justify-center transition-colors duration-500" data-no-drag>
+      {extensionFilterPending ? (
+        <div className="flex flex-col items-center gap-2 text-[var(--qc-fg-subtle)]">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-qc-border border-t-[var(--theme-9)]"></div>
+          <p className="text-sm">{t('clipboard.identifyingExtensionFilter', '正在识别插件匹配...')}</p>
+        </div>
+      ) : (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-[var(--qc-fg-subtle)] text-sm">{t('clipboard.emptyExtensionFilter', '该插件未匹配到记录')}</p>
+          <button
+            type="button"
+            onClick={onClearFilters}
+            aria-label={t('common.clearFilters', '清除筛选')}
+            className="text-sm text-[var(--qc-accent)] hover:underline focus:outline-none py-1.5 -my-1.5"
+          >
+            {t('common.clearFilters', '清除筛选')}
+          </button>
+        </div>
+      )}
+    </div>;
+  }
+
   if (clipSnap.totalCount === 0) {
     const hasActiveFilters = (clipSnap.contentType && clipSnap.contentType !== 'all')
       || (clipSnap.pasteStatus && clipSnap.pasteStatus !== 'all');
@@ -621,8 +704,8 @@ const ClipboardList = forwardRef(({
   return <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDndDragStart} onDragEnd={handleDndDragEnd} onDragCancel={handleDndDragCancel} cancelDrop={shouldCancelDndDrop} modifiers={[]}>
     <ExternalDragSafeZones visible={showSafeZones} />
     <div className="flex-1 bg-qc-surface overflow-hidden custom-scrollbar-container transition-colors duration-500" data-no-drag>
-      <SortableContext items={loadedEntries.map(item => item._sortId)} strategy={strategy}>
-        <Virtuoso ref={virtuosoRef} totalCount={clipSnap.totalCount || 0} scrollerRef={scrollerRefCallback} atTopStateChange={atTop => {
+      <SortableContext items={viewEntries.map(item => item._sortId)} strategy={strategy}>
+        <Virtuoso ref={virtuosoRef} totalCount={viewTotalCount || 0} scrollerRef={scrollerRefCallback} atTopStateChange={atTop => {
           onScrollStateChange?.({
             atTop
           });
@@ -630,7 +713,8 @@ const ClipboardList = forwardRef(({
           top: LIST_VIEWPORT_PADDING,
           bottom: LIST_VIEWPORT_PADDING
         }} defaultItemHeight={defaultHeight} itemContent={index => {
-          const item = clipSnap.items[index];
+          const viewEntry = isExtensionFilterActive ? viewEntries[index] : null;
+          const item = viewEntry ? viewEntry.item : clipSnap.items[index];
           if (!item?.id) {
             return isCardStyle ? <div style={getCardOuterStyle(index)}>
               <div className={heightClass}>
@@ -649,7 +733,7 @@ const ClipboardList = forwardRef(({
 
           const dragActive = Boolean(activeId);
           const animationDelay = settings.uiAnimationEnabled !== false ? Math.min(index * 20, 100) : 0;
-          const sortId = `${item.created_at}-${index}`;
+          const sortId = viewEntry ? viewEntry._sortId : `${item.created_at}-${index}`;
           return isCardStyle ? <div style={getCardOuterStyle(index)}>
             <div className={heightClass}>
               <ClipboardItem
@@ -668,7 +752,7 @@ const ClipboardList = forwardRef(({
                 onHover={handleItemHover}
                 onClick={handleItemClick}
                 isDragActive={!isMultiSelectMode && dragActive}
-                isDraggable={!isMultiSelectMode}
+                isDraggable={!isMultiSelectMode && !isExtensionFilterActive}
                 showShortcut={showShortcut}
                 showIndex={showIndex}
                 animationDelay={animationDelay}
@@ -693,7 +777,7 @@ const ClipboardList = forwardRef(({
               onHover={handleItemHover}
               onClick={handleItemClick}
               isDragActive={!isMultiSelectMode && dragActive}
-              isDraggable={!isMultiSelectMode}
+              isDraggable={!isMultiSelectMode && !isExtensionFilterActive}
               showShortcut={showShortcut}
               showIndex={showIndex}
               animationDelay={animationDelay}

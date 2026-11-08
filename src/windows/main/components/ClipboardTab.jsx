@@ -11,6 +11,7 @@ const SEARCH_DEBOUNCE_DELAY = 200;
 const ClipboardTab = forwardRef(({
   contentFilter,
   pasteFilter = 'all',
+  extensionFilter = 'all',
   searchQuery,
   onClearFilters
 }, ref) => {
@@ -117,7 +118,7 @@ const ClipboardTab = forwardRef(({
   
   return <div className="h-full flex flex-col relative">
     {/* 列表 */}
-    <ClipboardList ref={listRef} onScrollStateChange={handleScrollStateChange} onClearFilters={onClearFilters} />
+    <ClipboardList ref={listRef} onScrollStateChange={handleScrollStateChange} onClearFilters={onClearFilters} extensionFilter={extensionFilter} />
 
     {/* 悬浮工具栏 */}
     <FloatingToolbar showScrollTop={!isAtTop && snap.totalCount > 0} showAddFavorite={false} onScrollTop={() => handleScrollToTop({

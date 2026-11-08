@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSnapshot } from 'valtio';
 import { settingsStore } from '@shared/store/settingsStore';
 import Tooltip from '@shared/components/common/Tooltip.jsx';
+import { computeAnchoredPanelStyle } from '../utils/anchorPanel';
 
 const LISTBOX_ID = 'qc-filter-type-listbox';
 const ALL_OPTION_ID = 'qc-filter-type-option-all';
@@ -55,36 +56,15 @@ function FilterTypeDropdown({
     }
 
     const rect = trigger.getBoundingClientRect();
-    const width = Math.min(
-      Math.max(rect.width, PANEL_MIN_WIDTH),
-      Math.max(PANEL_MIN_WIDTH, window.innerWidth - VIEWPORT_MARGIN * 2)
-    );
-    let left = mode === 'sidebar' ? rect.right + VIEWPORT_MARGIN : rect.left;
-    if (left + width > window.innerWidth - VIEWPORT_MARGIN) {
-      left = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN);
-    }
-
     // 依据真实可用空间决定展开方向：下方不足且上方更充裕时向上展开，
     // maxHeight 按可用空间钳制，两边都不够时由面板自身滚动兜底。
-    const spaceBelow = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
-    const spaceAbove = rect.top - VIEWPORT_MARGIN;
-    const placeAbove = spaceBelow < PANEL_MAX_HEIGHT && spaceAbove > spaceBelow;
-    // 以选定方向的实际可用空间钳制 maxHeight，两边都不足时由面板内部滚动兜底。
-    const availableHeight = Math.max(
-      0,
-      Math.min(PANEL_MAX_HEIGHT, (placeAbove ? spaceAbove : spaceBelow) - VIEWPORT_MARGIN)
-    );
-
-    const style = {
-      left: `${Math.round(left)}px`,
-      width: `${Math.round(width)}px`,
-      maxHeight: `${Math.round(availableHeight)}px`
-    };
-    if (placeAbove) {
-      style.bottom = `${Math.round(window.innerHeight - rect.top + VIEWPORT_MARGIN)}px`;
-    } else {
-      style.top = `${Math.round(rect.bottom + VIEWPORT_MARGIN)}px`;
-    }
+    const style = computeAnchoredPanelStyle({
+      triggerRect: rect,
+      mode,
+      minWidth: PANEL_MIN_WIDTH,
+      maxHeight: PANEL_MAX_HEIGHT,
+      viewportMargin: VIEWPORT_MARGIN,
+    });
 
     setPanelStyle(style);
     setActiveIndex(-1);

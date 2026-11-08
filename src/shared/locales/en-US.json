@@ -71,6 +71,8 @@
     "history": "Clipboard History",
     "empty": "No clipboard history yet",
     "emptyFilter": "No items match the current filter",
+    "emptyExtensionFilter": "No items matched by this plugin",
+    "identifyingExtensionFilter": "Identifying plugin matches...",
     "clear": "Clear History",
     "copy": "Copy",
     "paste": "Paste",
@@ -193,7 +195,9 @@
     "file": "File",
     "link": "Link",
     "unpasted": "Unpasted",
-    "pasted": "Pasted"
+    "pasted": "Pasted",
+    "extensionFilter": "Plugin filter",
+    "allExtensions": "All plugins"
   },
   "sidebar": {
     "collapse": "Collapse",
